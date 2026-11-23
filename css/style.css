@@ -163,3 +163,13 @@ button.link { border: 0; background: none; color: var(--muted); padding: 0; font
 #tab-program > .row.between { flex-wrap: nowrap; }
 #tab-program > .row.between button { padding: 6px 10px; font-size: 0.85rem; white-space: nowrap; }
 #tab-program .week-title { flex: 1; font-size: 0.95rem; }
+.badge.rot-A { background: color-mix(in srgb, var(--lift) 18%, transparent); color: var(--lift); }
+.badge.rot-B { background: color-mix(in srgb, var(--hyp) 18%, transparent); color: var(--hyp); }
+.badge.rot-C { background: color-mix(in srgb, var(--run) 18%, transparent); color: var(--run); }
+.badge.rot-D { background: var(--line); color: var(--muted); }
+.day header { gap: 8px; }
+.day header .badge { font-size: 0.72rem; white-space: nowrap; }
+details.card > summary { cursor: pointer; list-style: none; }
+details.card > summary::-webkit-details-marker { display: none; }
+.run-card .score .num { width: 56px; height: 56px; font-size: 1.2rem; border-width: 4px; }
+#garminRuns h2 { margin: 0; }

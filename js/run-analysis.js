@@ -184,3 +184,50 @@ export function evaluateRun(run, settings, history = [], nextSession = null) {
     items: out,
   };
 }
+
+// 최근 러닝 기록(가민)으로 다음 주 러닝 처방 기준 계산
+export function runStats(runLogs, today = new Date(), garminVo2 = null) {
+  const day0 = new Date(today);
+  day0.setHours(12, 0, 0, 0);
+  const ago = (r) => (day0 - new Date(r.date + 'T12:00:00')) / 86400000;
+  const recent = runLogs.filter((r) => ago(r) >= 0 && ago(r) < 56);
+  if (!recent.length) return null;
+
+  // 최근 4주 (오늘 제외, 7일 단위)
+  const weeks = [0, 1, 2, 3].map((w) => recent
+    .filter((r) => ago(r) >= 1 + w * 7 && ago(r) < 1 + (w + 1) * 7)
+    .reduce((a, r) => a + Number(r.distanceKm || 0), 0));
+  const span = Math.max(...recent.map(ago));
+  const nWeeks = Math.min(4, Math.max(1, Math.ceil(span / 7)));
+  const avg4 = weeks.slice(0, nWeeks).reduce((a, b) => a + b, 0) / nWeeks;
+  const lastWeek = weeks[0];
+  const acwr = avg4 > 0 ? lastWeek / avg4 : null;
+
+  // 점진적 증가: 4주 평균의 +8%, 단 지난주의 +15%를 넘지 않음. 부하가 급증했으면 유지
+  let base = avg4 * 1.08;
+  if (lastWeek > 0) base = Math.min(base, lastWeek * 1.15);
+  if (acwr && acwr > 1.3) base = avg4;
+  base = Math.max(10, Math.round(base * 2) / 2);
+
+  // 체력 지표: 가민 VO2max 우선, 없으면 최근 강한 러닝의 VDOT 최댓값
+  let vo2 = Number(garminVo2) || null;
+  let source = vo2 ? '가민 VO2max' : null;
+  if (!vo2) {
+    const hard = recent.filter((r) => ['tempo', 'interval', 'race'].includes(r.type) && Number(r.distanceKm) >= 3);
+    const best = Math.max(0, ...hard.map((r) => vdot(Number(r.distanceKm) * 1000, parseTime(r.duration))));
+    if (best > 20) { vo2 = best; source = '최근 기록 VDOT'; }
+  }
+  const longest = Math.max(0, ...recent.filter((r) => ago(r) < 28).map((r) => Number(r.distanceKm)));
+
+  return {
+    baseKm: base,
+    avg4: Math.round(avg4 * 10) / 10,
+    lastWeek: Math.round(lastWeek * 10) / 10,
+    acwr,
+    vo2,
+    vo2Source: source,
+    fiveKSec: vo2 ? Math.round(predictTime(vo2, 5000)) : null,
+    longest,
+    count: recent.length,
+  };
+}

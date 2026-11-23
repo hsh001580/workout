@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyze, angle } from '../js/form-analysis.js';
-import { buildWeek, paces, fmtPace } from '../js/program.js';
-import { evaluateRun, vdot, predictTime } from '../js/run-analysis.js';
+import { buildWeek, sessionFor, paces, fmtPace } from '../js/program.js';
+import { evaluateRun, vdot, predictTime, runStats } from '../js/run-analysis.js';
+import { detectType, decrypt } from '../js/garmin.js';
+import { readFileSync, existsSync } from 'node:fs';
 
 const rad = (d) => (d * Math.PI) / 180;
 
@@ -107,20 +109,54 @@ test('벤치: 락아웃 불완전 감지', () => {
   assert.ok(res.reps.some((r) => r.issues.some((i) => i.text.includes('락아웃 불완전'))));
 });
 
-test('주간 프로그램: 5일, 1주차 스쿼트 무게', () => {
-  const s = { squat1rm: 140, bench1rm: 100, deadlift1rm: 180, tmPercent: 90, days: 5, weeklyKm: 20, fiveK: '25:00' };
+test('주간 프로그램: 4일 로테이션 + 러닝 배치', () => {
+  const s = { squat1rm: 140, bench1rm: 100, deadlift1rm: 180, ohp1rm: 60, tmPercent: 90, weeklyKm: 24, fiveK: '25:00', startDate: '2026-11-23' };
   const w = buildWeek(s, 0);
-  const sq = w.days[0].items[0];
+  const keys = w.days.map((d) => d.rotation.key).join('');
+  assert.equal(keys, 'ABCDABC');
+  const sq = w.days[0].items.find((i) => i.lift === 'squat');
   assert.match(sq.detail, /5세트 × 5회 @ 95kg/); // 140*0.9*0.75 = 94.5 → 95
-  const trainDays = w.days.filter((d) => !d.rest).length;
-  assert.equal(trainDays, 5);
-  const km = w.days.flatMap((d) => d.items).filter((i) => i.type === 'run').reduce((a, i) => a + i.km, 0);
-  assert.ok(Math.abs(km - 20) <= 2, `km ${km}`);
-  // 디로드 주간은 러닝 감소
-  assert.ok(buildWeek(s, 3).weeklyKm < w.weeklyKm);
-  // 다음 주기 TM 증가
-  assert.ok(buildWeek(s, 4).tm.squat > w.tm.squat);
-  for (const d of [4, 6]) assert.equal(buildWeek({ ...s, days: d }, 0).days.filter((x) => !x.rest).length, d);
+  assert.ok(w.days[0].items.some((i) => i.lift === 'ohp'));
+  assert.ok(w.days[1].items.some((i) => i.lift === 'deadlift') && w.days[1].items.some((i) => i.lift === 'bench'));
+  const runs = w.days.flatMap((d) => d.items.filter((i) => i.type === 'run').map((i) => ({ ...i, rot: d.rotation.key })));
+  assert.equal(runs.length, 4);
+  // 고강도 러닝은 하체 날(A,B)에 배치하지 않음
+  for (const r of runs.filter((x) => x.runType !== 'easy')) assert.ok(!['A', 'B'].includes(r.rot), JSON.stringify(r));
+  const km = runs.reduce((a, i) => a + i.km, 0);
+  assert.ok(Math.abs(km - 24) <= 2, `km ${km}`);
+  assert.ok(buildWeek(s, 3).weeklyKm < w.weeklyKm); // 디로드
+  assert.ok(buildWeek(s, 4).tm.squat > w.tm.squat); // 다음 주기 증량
+  // 월요일이 아닌 시작일에도 요일·처방 일치
+  const w2 = buildWeek({ ...s, startDate: '2026-11-26' }, 0);
+  assert.equal(w2.days[0].name, '목');
+  assert.equal(sessionFor({ ...s, startDate: '2026-11-26' }, new Date('2026-11-27T09:00:00')).rotation.key, 'B');
+});
+
+test('가민 기록 기반 러닝 처방', () => {
+  const today = new Date('2026-11-23T08:00:00');
+  const logs = [];
+  for (let d = 1; d <= 28; d += 2) {
+    const date = new Date(today); date.setDate(today.getDate() - d);
+    logs.push({ date: date.toISOString().slice(0, 10), distanceKm: d % 6 === 1 ? 12 : 6, duration: 2400, type: 'easy' });
+  }
+  const st = runStats(logs, today, 52);
+  assert.ok(st.avg4 > 20 && st.avg4 < 40, `avg4 ${st.avg4}`);
+  assert.ok(st.baseKm <= st.avg4 * 1.08 + 0.5);
+  assert.equal(st.longest, 12);
+  assert.ok(st.fiveKSec > 1100 && st.fiveKSec < 1250, `5k ${st.fiveKSec}`); // VO2max 52 ≈ 19분대
+  const s = { squat1rm: 140, bench1rm: 100, deadlift1rm: 180, ohp1rm: 60, tmPercent: 90, weeklyKm: 10, fiveK: '30:00', startDate: '2026-11-23' };
+  const w = buildWeek(s, 0, st);
+  assert.equal(w.weeklyKm, st.baseKm);
+  const long = w.days.flatMap((d) => d.items).find((i) => i.runType === 'long');
+  assert.ok(long.km <= 14, `long ${long.km}`); // 최장 12km + 2km 이내
+  assert.equal(runStats([], today), null);
+});
+
+test('가민 활동 분류', () => {
+  const s = { hrMax: 190, hrRest: 60 };
+  assert.equal(detectType({ teLabel: 'TEMPO', durationSec: 1800 }, s), 'tempo');
+  assert.equal(detectType({ teLabel: 'BASE', durationSec: 5400 }, s), 'long');
+  assert.equal(detectType({ avgHr: 180, durationSec: 1500 }, s), 'interval');
 });
 
 test('페이스 계산', () => {
@@ -142,4 +178,12 @@ test('러닝 평가: 너무 빠른 이지 런 감점', () => {
   assert.ok(easyFast.score < easyOk.score - 20, `${easyFast.score} vs ${easyOk.score}`);
   const bad = evaluateRun({ type: 'easy', distanceKm: 0, duration: '' }, settings);
   assert.equal(bad.ok, false);
+});
+
+test('가민 암호화 파일 복호화 (파이썬 스크립트 출력)', { skip: !existsSync(new URL('./fixtures/garmin.enc.json', import.meta.url)) }, async () => {
+  const payload = JSON.parse(readFileSync(new URL('./fixtures/garmin.enc.json', import.meta.url)));
+  const data = await decrypt(payload, 'test-pass');
+  assert.equal(data.runs.length, 2);
+  assert.equal(data.runs[0].distanceKm, 8.012);
+  await assert.rejects(decrypt(payload, 'wrong'), /비밀번호/);
 });

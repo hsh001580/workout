@@ -20,9 +20,9 @@ export function defaultState() {
       squat1rm: 140,
       bench1rm: 100,
       deadlift1rm: 180,
+      ohp1rm: 60,
       tmPercent: 90, // 트레이닝 맥스 = 1RM의 %
-      days: 5, // 주당 훈련일 4/5/6
-      weeklyKm: 20,
+      weeklyKm: 20, // 가민 기록이 없을 때만 사용
       fiveK: '25:00',
       hrMax: 190,
       hrRest: 60,
@@ -31,6 +31,14 @@ export function defaultState() {
     formLogs: [],
     runLogs: [],
     done: {},
+    garmin: {
+      url: 'data/garmin.enc.json',
+      passphrase: '',
+      lastSync: null,
+      updated: null,
+      vo2max: null,
+      restingHr: null,
+    },
   };
 }
 
@@ -44,6 +52,7 @@ export function load() {
       ...base,
       ...parsed,
       settings: { ...base.settings, ...(parsed.settings || {}) },
+      garmin: { ...base.garmin, ...(parsed.garmin || {}) },
     };
   } catch {
     return defaultState();

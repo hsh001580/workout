@@ -48,6 +48,7 @@
               <option value="squat">스쿼트</option>
               <option value="bench">벤치프레스</option>
               <option value="deadlift">데드리프트</option>
+              <option value="ohp">오버헤드 프레스</option>
             </select>
           </label>
           <label>무게 (kg)
@@ -85,9 +86,9 @@
 
     <!-- 러닝 평가 -->
     <section id="tab-run" class="tab">
-      <div class="card">
-        <h2>러닝 평가</h2>
-        <p class="muted">러닝을 마친 뒤 워치나 앱의 기록을 입력하세요. 심박이 있으면 더 정확하게 평가합니다.</p>
+      <div id="garminRuns"></div>
+      <details class="card">
+        <summary><b>수동 입력</b> <span class="muted">(가민 외 기록)</span></summary>
         <div class="grid2">
           <label>날짜 <input type="date" id="runDate" /></label>
           <label>종류
@@ -102,7 +103,7 @@
         </div>
         <label>메모 <textarea id="runNote" rows="2" placeholder="예: 더웠음, 왼쪽 정강이 뻐근"></textarea></label>
         <button id="runEval" class="primary">평가하기</button>
-      </div>
+      </details>
       <div id="runResult"></div>
     </section>
 
@@ -118,17 +119,25 @@
           <label>벤치 1RM (kg) <input type="number" name="bench1rm" step="2.5" /></label>
           <label>데드리프트 1RM (kg) <input type="number" name="deadlift1rm" step="2.5" /></label>
           <label>트레이닝 맥스 (% of 1RM) <input type="number" name="tmPercent" min="80" max="100" /></label>
-          <label>주당 훈련일
-            <select name="days"><option value="4">4일</option><option value="5">5일</option><option value="6">6일</option></select>
-          </label>
-          <label>주간 러닝 거리 (km) <input type="number" name="weeklyKm" min="5" max="150" /></label>
-          <label>최근 5K 기록 (mm:ss) <input type="text" name="fiveK" /></label>
+          <label>오버헤드 프레스 1RM (kg) <input type="number" name="ohp1rm" step="2.5" /></label>
+          <label>주간 러닝 거리 (km, 가민 기록 없을 때) <input type="number" name="weeklyKm" min="5" max="150" /></label>
+          <label>최근 5K 기록 (mm:ss, 가민 기록 없을 때) <input type="text" name="fiveK" /></label>
           <label>최대 심박 <input type="number" name="hrMax" /></label>
           <label>안정시 심박 <input type="number" name="hrRest" /></label>
-          <label>프로그램 시작일 (월요일 권장) <input type="date" name="startDate" /></label>
+          <label>로테이션 시작일 (이날이 OHP+스쿼트) <input type="date" name="startDate" /></label>
         </form>
         <button id="saveSettings" class="primary">저장</button>
         <span id="settingsMsg" class="muted"></span>
+      </div>
+      <div class="card">
+        <h2>가민 연동</h2>
+        <p class="muted">GitHub Actions가 3시간마다 가민 러닝 기록을 가져와 암호화해 저장합니다. 저장소 Secrets에 넣은 <b>DATA_PASSPHRASE</b>를 입력하세요. (설정 방법은 README 참고)</p>
+        <div class="grid2">
+          <label>복호화 비밀번호 <input type="password" id="garminPass" autocomplete="off" /></label>
+          <label>데이터 경로 <input type="text" id="garminUrl" /></label>
+        </div>
+        <button id="garminSync" class="primary">저장하고 지금 불러오기</button>
+        <p id="garminStatus" class="muted"></p>
       </div>
       <div class="card">
         <h2>데이터 백업</h2>

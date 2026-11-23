@@ -1,91 +1,45 @@
-// 파워리프팅 + 근비대 + 러닝 주간 프로그램 생성기 (4주 웨이브 주기)
+// 4일 로테이션 웨이트 + 가민 기록 기반 러닝 주간 프로그램
+// 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔) → D(휴식) 반복
 
 export const DAY_NAMES = ['월', '화', '수', '목', '금', '토', '일'];
 
 // 주차별 강도 (트레이닝 맥스 대비 %)
 export const WAVE = [
-  { name: '1주차 · 적응', heavy: { sets: 5, reps: 5, pct: 75 }, volume: { sets: 4, reps: 8, pct: 65 }, runMul: 1.0, quality: 'tempo' },
-  { name: '2주차 · 누적', heavy: { sets: 5, reps: 4, pct: 80 }, volume: { sets: 4, reps: 7, pct: 68 }, runMul: 1.1, quality: 'interval' },
-  { name: '3주차 · 강화', heavy: { sets: 5, reps: 3, pct: 85 }, volume: { sets: 3, reps: 6, pct: 72 }, runMul: 1.2, quality: 'cruise' },
-  { name: '4주차 · 디로드', heavy: { sets: 3, reps: 5, pct: 60 }, volume: { sets: 2, reps: 8, pct: 55 }, runMul: 0.7, quality: 'strides', deload: true },
+  { name: '적응 주간', heavy: { sets: 5, reps: 5, pct: 75 }, backoff: { reps: 8, pct: 65 }, runMul: 1.0, quality: 'tempo' },
+  { name: '누적 주간', heavy: { sets: 5, reps: 4, pct: 80 }, backoff: { reps: 7, pct: 68 }, runMul: 1.05, quality: 'interval' },
+  { name: '강화 주간', heavy: { sets: 5, reps: 3, pct: 85 }, backoff: { reps: 6, pct: 72 }, runMul: 1.1, quality: 'cruise' },
+  { name: '디로드 주간', heavy: { sets: 3, reps: 5, pct: 60 }, backoff: null, runMul: 0.7, quality: 'strides', deload: true },
 ];
 
-const LIFT_KO = { squat: '백 스쿼트', bench: '벤치프레스', deadlift: '데드리프트' };
+export const LIFT_KO = { squat: '백 스쿼트', bench: '벤치프레스', deadlift: '데드리프트', ohp: '오버헤드 프레스' };
 
-const HYPERTROPHY = {
-  legs: [
-    ['레그 프레스', 3, '10-12'],
-    ['루마니안 데드리프트', 3, '8-10'],
-    ['레그 컬', 3, '12'],
-    ['카프 레이즈', 3, '15'],
-  ],
-  push: [
-    ['인클라인 덤벨 프레스', 3, '8-12'],
-    ['덤벨 숄더 프레스', 3, '10'],
-    ['케이블 플라이', 3, '12-15'],
-    ['트라이셉스 푸시다운', 3, '12'],
-  ],
-  back: [
-    ['풀업 / 랫풀다운', 4, '8-10'],
-    ['바벨 로우', 3, '8'],
-    ['시티드 케이블 로우', 3, '10-12'],
-    ['페이스 풀', 3, '15'],
-  ],
-  arms: [
-    ['사이드 레터럴 레이즈', 4, '15'],
-    ['덤벨 컬', 3, '12'],
-    ['오버헤드 트라이셉스 익스텐션', 3, '12'],
-    ['리어 델트 플라이', 3, '15'],
-  ],
-};
+export const ROTATION = [
+  { key: 'A', title: '오버헤드프레스 + 스쿼트', lifts: ['squat', 'ohp'], hyp: [['레그 프레스', 3, '10-12'], ['사이드 레터럴 레이즈', 3, '15']] },
+  { key: 'B', title: '벤치 + 데드리프트', lifts: ['bench', 'deadlift'], hyp: [['인클라인 덤벨 프레스', 3, '8-12'], ['트라이셉스 푸시다운', 3, '12']] },
+  {
+    key: 'C', title: '등 + 팔', lifts: [], hyp: [
+      ['풀업 / 랫풀다운', 4, '8-10'], ['바벨 로우', 3, '8'], ['시티드 케이블 로우', 3, '10-12'], ['페이스 풀', 3, '15'],
+      ['바벨 컬', 3, '10'], ['해머 컬', 3, '12'], ['오버헤드 트라이셉스 익스텐션', 3, '12'], ['딥스 / 클로즈그립 벤치', 3, '10'],
+    ],
+  },
+  { key: 'D', title: '웨이트 휴식', lifts: [], hyp: [] },
+];
 
-const HYP_KO = { legs: '하체 근비대', push: '상체 밀기 근비대', back: '등 근비대', arms: '어깨·팔 근비대' };
-
-// 주당 훈련일별 템플릿 (월~일). 무거운 하체 다음 날에는 고강도 러닝을 두지 않는다.
-const TEMPLATES = {
-  4: [
-    [['lift', 'squat', 'heavy'], ['lift', 'bench', 'volume'], ['hyp', 'legs']],
-    [['run', 'quality']],
-    [],
-    [['lift', 'deadlift', 'heavy'], ['lift', 'bench', 'heavy'], ['hyp', 'back']],
-    [],
-    [['run', 'long'], ['hyp', 'arms']],
-    [],
-  ],
-  5: [
-    [['lift', 'squat', 'heavy'], ['hyp', 'legs']],
-    [['lift', 'bench', 'heavy'], ['hyp', 'push'], ['run', 'easy']],
-    [['run', 'quality']],
-    [['lift', 'deadlift', 'heavy'], ['hyp', 'back']],
-    [],
-    [['run', 'long'], ['lift', 'bench', 'volume'], ['hyp', 'arms']],
-    [],
-  ],
-  6: [
-    [['lift', 'squat', 'heavy'], ['hyp', 'legs']],
-    [['lift', 'bench', 'heavy'], ['hyp', 'push'], ['run', 'easy']],
-    [['run', 'quality'], ['hyp', 'arms']],
-    [['lift', 'deadlift', 'heavy'], ['hyp', 'back']],
-    [['lift', 'bench', 'volume'], ['lift', 'squat', 'volume'], ['run', 'easy']],
-    [['run', 'long']],
-    [],
-  ],
-};
-
-const RUN_WEIGHT = { easy: 1, quality: 1.2, long: 1.6 };
+const RUN_WEIGHT = { easy: 1, quality: 1.25, long: 1.8 };
 
 export function parseTime(str) {
   if (typeof str === 'number') return str;
   const parts = String(str || '').trim().split(':').map(Number);
-  if (parts.some((n) => Number.isNaN(n))) return NaN;
+  if (!parts.length || parts.some((n) => Number.isNaN(n))) return NaN;
   return parts.reduce((acc, n) => acc * 60 + n, 0);
 }
 
 export function fmtPace(secPerKm) {
   if (!Number.isFinite(secPerKm) || secPerKm <= 0) return '-';
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
-  return s === 60 ? `${m + 1}:00` : `${m}:${String(s).padStart(2, '0')}`;
+  let m = Math.floor(secPerKm / 60);
+  let s = Math.round(secPerKm % 60);
+  if (s === 60) { m += 1; s = 0; }
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export function fmtDuration(sec) {
@@ -96,7 +50,7 @@ export function fmtDuration(sec) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
-// 5K 기록 기반 훈련 페이스 (초/km)
+// 5K 기록(초 또는 'mm:ss') 기반 훈련 페이스 (초/km)
 export function paces(fiveK) {
   const p = parseTime(fiveK) / 5;
   const base = Number.isFinite(p) && p > 0 ? p : 300;
@@ -113,22 +67,29 @@ export function roundTo(kg, step = 2.5) {
   return Math.round(kg / step) * step;
 }
 
+function midnight(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function daysBetween(startDate, date) {
+  return Math.round((midnight(date) - new Date(startDate + 'T00:00:00')) / 86400000);
+}
+
 export function weekIndex(startDate, date = new Date()) {
-  const start = new Date(startDate + 'T00:00:00');
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  const days = Math.floor((d - start) / 86400000);
-  return Math.max(0, Math.floor(days / 7));
+  return Math.max(0, Math.floor(daysBetween(startDate, date) / 7));
+}
+
+export function rotationOf(startDate, date) {
+  const n = daysBetween(startDate, date);
+  return ROTATION[((n % 4) + 4) % 4];
 }
 
 function buildRun(kind, km, wave, pc) {
   const pr = (r) => `${fmtPace(r[0])}~${fmtPace(r[1])}/km`;
-  if (kind === 'easy') {
-    return { title: '이지 런', km, detail: `${km}km 편하게 (대화 가능한 강도, 심박 Z2)`, pace: pr(pc.easy), runType: 'easy' };
-  }
-  if (kind === 'long') {
-    return { title: '롱 런', km, detail: `${km}km 꾸준히, 마지막 2km는 살짝 빠르게 가능`, pace: pr(pc.long), runType: 'long' };
-  }
+  if (kind === 'easy') return { title: '이지 런', km, detail: `${km}km 편하게 (대화 가능한 강도, 심박 Z2)`, pace: pr(pc.easy), runType: 'easy' };
+  if (kind === 'long') return { title: '롱 런', km, detail: `${km}km 꾸준히, 마지막 2km는 살짝 빠르게 가능`, pace: pr(pc.long), runType: 'long' };
   const main = Math.max(2, Math.round((km - 3.5) * 2) / 2);
   switch (wave.quality) {
     case 'tempo':
@@ -146,51 +107,107 @@ function buildRun(kind, km, wave, pc) {
   }
 }
 
-export function buildWeek(settings, weekIdx = 0) {
+// 러닝 배치 규칙: 하체를 하는 A·B일에는 고강도 러닝 금지.
+//  품질 런 → C(상체) > D(휴식) / 롱 런 → 주말 D > D > 주말 C > C / 이지 → D > C > A > B
+const PREF = {
+  quality: (r, wk) => ({ C: 3, D: 2 }[r] || 0),
+  long: (r, wk) => ({ D: 4, C: 2 }[r] || 0) + (wk ? 1.5 : 0),
+  easy: (r) => ({ D: 4, C: 3, A: 2, B: 1 }[r] || 0),
+};
+
+function placeRuns(days, kinds) {
+  const used = new Set();
+  const placed = [];
+  for (const kind of kinds) {
+    let best = -1;
+    let bestScore = 0;
+    days.forEach((d, i) => {
+      if (used.has(i)) return;
+      let s = PREF[kind](d.rotation.key, d.date.getDay() === 0 || d.date.getDay() === 6);
+      // 품질 런 다음 날 롱 런, 롱 런 다음 날 품질 런 피하기
+      if (kind !== 'easy' && placed.some((p) => p.kind !== 'easy' && Math.abs(p.i - i) === 1)) s -= 1.5;
+      if (s > bestScore) { bestScore = s; best = i; }
+    });
+    if (best >= 0) { used.add(best); placed.push({ kind, i: best }); }
+  }
+  return placed;
+}
+
+/**
+ * @param settings 앱 설정
+ * @param weekIdx 시작일 기준 주차 (0부터)
+ * @param stats run-analysis.runStats() 결과 (가민 기록 기반, 없으면 설정값 사용)
+ */
+export function buildWeek(settings, weekIdx = 0, stats = null) {
   const wave = WAVE[weekIdx % 4];
   const cycle = Math.floor(weekIdx / 4);
   const tmPct = (settings.tmPercent || 90) / 100;
-  // 주기(4주)마다 트레이닝 맥스 증가: 하체 +5kg, 벤치 +2.5kg
-  const inc = { squat: 5, bench: 2.5, deadlift: 5 };
+  const inc = { squat: 5, bench: 2.5, deadlift: 5, ohp: 1.25 };
   const tm = {};
-  for (const l of ['squat', 'bench', 'deadlift']) tm[l] = Number(settings[l + '1rm']) * tmPct + inc[l] * cycle;
+  for (const l of Object.keys(inc)) tm[l] = Number(settings[l + '1rm'] || 0) * tmPct + inc[l] * cycle;
 
-  const template = TEMPLATES[settings.days] || TEMPLATES[5];
-  const pc = paces(settings.fiveK);
-  const weeklyKm = Number(settings.weeklyKm) * wave.runMul;
-  let totalW = 0;
-  template.forEach((day) => day.forEach((b) => { if (b[0] === 'run') totalW += RUN_WEIGHT[b[1]]; }));
+  const fiveK = stats?.fiveKSec || settings.fiveK;
+  const pc = paces(fiveK);
+  const baseKm = stats?.baseKm || Number(settings.weeklyKm) || 20;
+  const weeklyKm = Math.round(baseKm * wave.runMul * 2) / 2;
 
-  const days = template.map((blocks, i) => {
-    const items = blocks.map((b) => {
-      if (b[0] === 'lift') {
-        const [, lift, kind] = b;
-        const spec = wave[kind];
-        const kg = roundTo((tm[lift] * spec.pct) / 100);
-        return {
-          type: 'lift', lift, kind,
-          title: `${LIFT_KO[lift]} ${kind === 'heavy' ? '(헤비)' : '(볼륨)'}`,
-          detail: `${spec.sets}세트 × ${spec.reps}회 @ ${kg}kg (TM ${spec.pct}%)`,
-          note: kind === 'heavy' && !wave.deload ? '마지막 세트 RPE 8 이하 유지. 영상 촬영 후 자세 평가 권장' : '',
-        };
-      }
-      if (b[0] === 'hyp') {
-        const list = HYPERTROPHY[b[1]].map(([name, sets, reps]) => `${name} ${wave.deload ? Math.max(1, sets - 1) : sets}×${reps}`);
-        return { type: 'hyp', title: HYP_KO[b[1]], detail: list.join(' · '), note: '세트당 RIR 1-2' };
-      }
-      const km = Math.max(3, Math.round(((weeklyKm * RUN_WEIGHT[b[1]]) / totalW) * 2) / 2);
-      return { type: 'run', ...buildRun(b[1], km, wave, pc) };
-    });
-    return { dayIdx: i, name: DAY_NAMES[i], items, rest: items.length === 0 };
+  const start = new Date(settings.startDate + 'T00:00:00');
+  const days = DAY_NAMES.map((_, i) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + weekIdx * 7 + i);
+    const name = DAY_NAMES[(date.getDay() + 6) % 7];
+    const rotation = rotationOf(settings.startDate, date);
+    const items = [];
+    for (const lift of rotation.lifts) {
+      const h = wave.heavy;
+      const kg = roundTo((tm[lift] * h.pct) / 100);
+      let detail = `${h.sets}세트 × ${h.reps}회 @ ${kg}kg (TM ${h.pct}%)`;
+      if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100)}kg`;
+      items.push({
+        type: 'lift', lift, kind: 'heavy',
+        title: LIFT_KO[lift], detail, kg, sets: h.sets, reps: h.reps,
+        note: wave.deload ? '디로드: 가볍게, 자세에 집중' : '탑세트 RPE 8 이하. 영상 촬영 후 자세 평가',
+      });
+    }
+    if (rotation.hyp.length) {
+      items.push({
+        type: 'hyp',
+        title: rotation.key === 'C' ? '등 + 팔 근비대' : '보조 근비대',
+        detail: rotation.hyp.map(([n, s, r]) => `${n} ${wave.deload ? Math.max(1, s - 1) : s}×${r}`).join(' · '),
+        note: '세트당 RIR 1-2',
+      });
+    }
+    return { dayIdx: i, name, date, rotation, items };
   });
 
-  return { weekIdx, wave, cycle, tm, days, weeklyKm: Math.round(weeklyKm * 10) / 10 };
+  // 러닝 횟수: 주간 거리에 따라 3~5회
+  const n = weeklyKm < 15 ? 3 : weeklyKm < 35 ? 4 : 5;
+  const kinds = ['quality', 'long', ...Array(n - 2).fill('easy')];
+  const placed = placeRuns(days, kinds);
+  const totalW = placed.reduce((a, p) => a + RUN_WEIGHT[p.kind], 0);
+  const kmOf = {};
+  placed.forEach((p) => { kmOf[p.i] = Math.max(3, Math.round(((weeklyKm * RUN_WEIGHT[p.kind]) / totalW) * 2) / 2); });
+  // 롱 런은 최근 최장 거리 + 2km 이내로 제한하고 남는 거리는 이지 런에 분배
+  const longP = placed.find((p) => p.kind === 'long');
+  if (longP && stats?.longest) {
+    const cap = Math.max(6, Math.round((stats.longest + 2) * 2) / 2);
+    if (kmOf[longP.i] > cap) {
+      const extra = kmOf[longP.i] - cap;
+      kmOf[longP.i] = cap;
+      const easies = placed.filter((p) => p.kind === 'easy');
+      easies.forEach((p) => { kmOf[p.i] = Math.round((kmOf[p.i] + extra / easies.length) * 2) / 2; });
+    }
+  }
+  placed.forEach((p) => days[p.i].items.push({ type: 'run', ...buildRun(p.kind, kmOf[p.i], wave, pc) }));
+  days.forEach((d) => { d.rest = d.items.length === 0; });
+
+  return { weekIdx, wave, cycle, tm, days, weeklyKm, fiveKSec: parseTime(fiveK), stats };
 }
 
-// 특정 날짜의 처방 (러닝 평가에서 다음 날 일정 확인용)
-export function sessionFor(settings, date) {
+// 특정 날짜의 처방
+export function sessionFor(settings, date, stats = null) {
   const w = weekIndex(settings.startDate, date);
-  const week = buildWeek(settings, w);
-  const dayIdx = (new Date(date).getDay() + 6) % 7;
-  return week.days[dayIdx];
+  const week = buildWeek(settings, w, stats);
+  const i = Math.min(6, Math.max(0, daysBetween(settings.startDate, date) - w * 7));
+  return week.days[i];
 }

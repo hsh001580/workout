@@ -6,7 +6,7 @@ const IDX = {
   right: { shoulder: 12, elbow: 14, wrist: 16, hip: 24, knee: 26, ankle: 28, toe: 32 },
 };
 
-export const LIFT_LABEL = { squat: '스쿼트', bench: '벤치프레스', deadlift: '데드리프트' };
+export const LIFT_LABEL = { squat: '스쿼트', bench: '벤치프레스', deadlift: '데드리프트', ohp: '오버헤드 프레스' };
 
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -83,7 +83,7 @@ function smooth(pts, w = 1) {
 // 바닥(하단) 지점일수록 큰 값이 되는 신호
 function signalOf(lift, p) {
   if (lift === 'squat') return p.hip.y;
-  if (lift === 'bench') return p.wrist.y;
+  if (lift === 'bench' || lift === 'ohp') return p.wrist.y;
   return p.shoulder.y; // deadlift: 바닥에서 시작
 }
 
@@ -198,6 +198,47 @@ function analyzeBenchRep(pts, prevTop, bottom, nextTop, n) {
   };
 }
 
+function analyzeOhpRep(pts, prevTop, bottom, nextTop) {
+  const p = pts[bottom].p;
+  const torso = dist(p.shoulder, p.hip);
+  const forearm = dist(p.elbow, p.wrist);
+  const facing = Math.sign(p.toe.x - p.ankle.x) || 1;
+  const issues = [];
+  const stack = Math.abs(p.wrist.x - p.elbow.x) / forearm;
+  if (stack < 0.35) issues.push(issue('good', '시작 자세에서 전완이 수직'));
+  else issues.push(issue('warn', '시작 자세에서 팔꿈치가 바 아래에 있지 않음: 팔꿈치를 바 바로 아래로'));
+
+  const lo = prevTop ?? Math.max(0, bottom - 30);
+  const hi = nextTop ?? Math.min(pts.length - 1, bottom + 30);
+  const seg = pts.slice(Math.min(lo, bottom), Math.max(hi, bottom) + 1);
+  // 상체 뒤로 젖힘(레이백)
+  const layback = Math.max(...seg.map((f) => {
+    const back = -(f.p.shoulder.x - f.p.hip.x) * facing;
+    return (Math.atan2(back, Math.abs(f.p.hip.y - f.p.shoulder.y)) * 180) / Math.PI;
+  }));
+  if (layback > 15) issues.push(issue('bad', `상체를 과하게 젖힘 (${layback.toFixed(0)}°): 둔근·복근 조여 허리 보호`));
+  else if (layback > 8) issues.push(issue('warn', `상체 젖힘 ${layback.toFixed(0)}°: 갈비뼈를 내리고 코어 고정`));
+  // 무릎 반동 (스트릭트 프레스 기준)
+  const minKnee = Math.min(...seg.map((f) => angle(f.p.hip, f.p.knee, f.p.ankle)));
+  if (minKnee < 160) issues.push(issue('warn', `무릎 반동 사용 (${minKnee.toFixed(0)}°): 스트릭트 프레스는 다리를 고정`));
+
+  if (nextTop != null) {
+    const t = pts[nextTop].p;
+    const lock = angle(t.shoulder, t.elbow, t.wrist);
+    const over = Math.abs(t.wrist.x - midfoot(t)) / torso;
+    if (lock < 160) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
+    else issues.push(issue('good', '락아웃 완료'));
+    if (over > 0.25) issues.push(issue('warn', '락아웃에서 바가 미드풋 위에 있지 않음: 머리를 바 아래로 밀어 넣기'));
+  }
+  return {
+    metrics: { layback: Math.max(0, Math.round(layback)), knee: Math.round(minKnee) },
+    issues,
+    descent: prevTop != null ? pts[bottom].t - pts[prevTop].t : null,
+    ascent: nextTop != null ? pts[nextTop].t - pts[bottom].t : null,
+    keyFrame: bottom,
+  };
+}
+
 function analyzeDeadliftRep(pts, start, top) {
   const s = pts[start].p;
   const t = pts[top].p;
@@ -265,7 +306,8 @@ export function analyze(frames, lift, aspect = 1) {
       const pt = prev && prev.type === 'top' ? prev.i : null;
       const nt = next && next.type === 'top' ? next.i : null;
       if (pt == null && nt == null) continue;
-      reps.push(lift === 'squat' ? analyzeSquatRep(pts, pt, ev.i, nt) : analyzeBenchRep(pts, pt, ev.i, nt, n));
+      const fn = { squat: analyzeSquatRep, bench: analyzeBenchRep, ohp: analyzeOhpRep }[lift];
+      reps.push(fn(pts, pt, ev.i, nt, n));
     }
   }
   if (!reps.length) {
@@ -296,6 +338,7 @@ export function analyze(frames, lift, aspect = 1) {
 export const CHECKLIST = {
   squat: ['브레이싱(복압) 유지', '무릎이 발끝 방향으로', '발 전체로 지면 누르기', '깊이 패러렐 이하', '바 경로 수직'],
   bench: ['견갑 후인·하강 유지', '엉덩이 벤치에 고정', '레그 드라이브 사용', '가슴 터치 일정한 위치', '손목 중립'],
+  ohp: ['둔근·복근 조여 허리 젖히지 않기', '팔꿈치가 바 바로 아래', '머리를 바 아래로 밀어 넣기', '락아웃에서 어깨 으쓱', '무릎 반동 없음'],
   deadlift: ['바를 정강이에 붙이고 시작', '광배근 긴장(바 휘게 당기기)', '허리 중립 유지', '엉덩이·어깨 동시 상승', '락아웃 과신전 없음'],
 };
 

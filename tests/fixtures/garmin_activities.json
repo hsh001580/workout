@@ -1,0 +1,5 @@
+[
+  {"activityId": 101, "activityName": "아침 러닝", "startTimeLocal": "2026-11-20 07:01:00", "activityType": {"typeKey": "running"}, "distance": 8012.3, "duration": 2900.5, "movingDuration": 2880, "averageHR": 142, "maxHR": 158, "averageRunningCadenceInStepsPerMinute": 172.4, "elevationGain": 35, "vO2MaxValue": 51, "aerobicTrainingEffect": 2.9, "anaerobicTrainingEffect": 0.3, "trainingEffectLabel": "BASE"},
+  {"activityId": 102, "activityName": "웨이트", "startTimeLocal": "2026-11-20 19:00:00", "activityType": {"typeKey": "strength_training"}, "distance": 0, "duration": 3600},
+  {"activityId": 103, "activityName": "템포", "startTimeLocal": "2026-11-22 07:00:00", "activityType": {"typeKey": "treadmill_running"}, "distance": 10000, "duration": 2700, "averageHR": 168, "maxHR": 182, "averageRunningCadenceInStepsPerMinute": 178, "trainingEffectLabel": "TEMPO", "aerobicTrainingEffect": 3.8, "anaerobicTrainingEffect": 1.1}
+]
