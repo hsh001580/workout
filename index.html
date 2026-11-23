@@ -41,7 +41,7 @@
     <section id="tab-form" class="tab">
       <div class="card">
         <h2>파워리프팅 자세 평가</h2>
-        <p class="muted">스마트폰을 <b>측면(90°)</b>, 엉덩이 높이에 고정하고 머리부터 발끝까지 보이게 촬영하세요. 영상을 올리면 관절 위치를 분석해 반복마다 평가합니다. 영상은 기기 밖으로 전송되지 않습니다.</p>
+        <p class="muted">영상을 올리면 관절과 바벨을 추적해 반복마다 평가합니다. 영상은 기기 밖으로 전송되지 않습니다.</p>
         <div class="grid2">
           <label>종목
             <select id="formLift">
@@ -49,6 +49,13 @@
               <option value="bench">벤치프레스</option>
               <option value="deadlift">데드리프트</option>
               <option value="ohp">오버헤드 프레스</option>
+            </select>
+          </label>
+          <label>촬영 각도
+            <select id="formView">
+              <option value="side">측면 (90°)</option>
+              <option value="oblique">후방 대각선 (45°)</option>
+              <option value="front">정면·후면</option>
             </select>
           </label>
           <label>무게 (kg)
@@ -63,10 +70,20 @@
               <option>6</option><option>7</option><option>7.5</option><option>8</option><option>8.5</option><option>9</option><option>9.5</option><option>10</option>
             </select>
           </label>
+          <label>원판 지름 (cm)
+            <input type="number" id="plateDiam" value="45" min="20" max="50" />
+          </label>
         </div>
+        <p id="viewGuide" class="guide"></p>
         <label class="file">세트 영상 (선택)
           <input type="file" id="formVideo" accept="video/*" />
         </label>
+        <div id="plateStep" class="plate-step hidden">
+          <b>바벨 추적 (선택)</b>: 영상 위에서 ① <b>원판 중심</b> → ② <b>원판 위쪽 가장자리</b>를 차례로 탭하세요.
+          속도·스티킹 포인트·모멘트암을 계산합니다.
+          <span id="plateState" class="muted"></span>
+          <button class="link" id="plateReset">다시 지정</button>
+        </div>
         <div id="videoWrap" class="video-wrap hidden">
           <video id="formVideoEl" playsinline muted></video>
           <canvas id="formCanvas"></canvas>
@@ -128,6 +145,19 @@
         </form>
         <button id="saveSettings" class="primary">저장</button>
         <span id="settingsMsg" class="muted"></span>
+      </div>
+      <div class="card">
+        <h2>자세 평가 기준</h2>
+        <p class="muted">코칭 스타일에 따라 판정 기준이 다릅니다. 프리셋을 고르고, 필요하면 아래에서 값을 직접 바꾸세요. 바꾼 값은 프리셋보다 우선합니다.</p>
+        <label>프리셋 <select id="formPreset"></select></label>
+        <p id="presetDesc" class="muted"></p>
+        <details>
+          <summary>세부 기준값 편집</summary>
+          <div id="thresholdEditor" class="threshold-editor"></div>
+          <button id="resetThresholds" class="link">사용자 수정값 모두 지우기</button>
+        </details>
+        <button id="savePreset" class="primary">기준 저장</button>
+        <span id="presetMsg" class="muted"></span>
       </div>
       <div class="card">
         <h2>가민 연동</h2>

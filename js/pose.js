@@ -1,4 +1,6 @@
-// MediaPipe Pose Landmarker로 영상 프레임별 관절 좌표 추출 (브라우저 내 처리)
+// MediaPipe Pose Landmarker로 영상 프레임별 관절 좌표(2D + 3D) 추출 + 원판 추적 (브라우저 내 처리)
+import { toGray, createTracker } from './bar-track.js';
+
 const VERSION = '0.10.14';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}`;
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
@@ -26,7 +28,7 @@ async function getLandmarker() {
   return landmarkerPromise;
 }
 
-function seek(video, t) {
+export function seek(video, t) {
   return new Promise((resolve) => {
     const done = () => { video.removeEventListener('seeked', done); resolve(); };
     video.addEventListener('seeked', done);
@@ -41,64 +43,113 @@ export async function loadVideo(video, file) {
     video.onloadeddata = resolve;
     video.onerror = () => reject(new Error('영상을 열 수 없습니다.'));
   });
+  await seek(video, 0);
 }
 
-// fps: 분석 샘플링 속도. 최대 60초까지 분석
-export async function extractFrames(video, onProgress, fps = 15) {
+/**
+ * @param plate { cx, cy, rPx } 첫 프레임에서 탭한 원판 중심·반지름 (영상 픽셀). 없으면 바벨 추적 안 함
+ * @returns { frames: [{t, lm, world}], bar: [{t, x, y, lost}] | null }
+ */
+export async function extractFrames(video, onProgress, { fps = 15, plate = null } = {}) {
   onProgress?.(0, '포즈 인식 모델 불러오는 중…');
   const lm = await getLandmarker();
   const duration = Math.min(video.duration, 60);
   const frames = [];
   const step = 1 / fps;
+  const H = video.videoHeight;
+
+  // 원판 추적용 축소 캔버스 (원판 반지름이 약 28px이 되도록)
+  let tracker = null;
+  let ctx = null;
+  let ds = 1;
+  let cw = 0;
+  let ch = 0;
+  const bar = plate ? [] : null;
+  if (plate) {
+    ds = Math.min(1, 28 / plate.rPx);
+    cw = Math.round(video.videoWidth * ds);
+    ch = Math.round(H * ds);
+    const c = document.createElement('canvas');
+    c.width = cw;
+    c.height = ch;
+    ctx = c.getContext('2d', { willReadFrequently: true });
+  }
+  const grab = () => {
+    ctx.drawImage(video, 0, 0, cw, ch);
+    return toGray(ctx.getImageData(0, 0, cw, ch).data, cw, ch);
+  };
+
   let ts = 0;
   for (let t = 0; t <= duration; t += step) {
     await seek(video, t);
     ts += step * 1000; // 단조 증가 타임스탬프
     const res = lm.detectForVideo(video, ts);
     const pose = res.landmarks?.[0];
-    if (pose) frames.push({ t, lm: pose.map((p) => ({ x: p.x, y: p.y, z: p.z, visibility: p.visibility })) });
+    const world = res.worldLandmarks?.[0];
+    if (pose) {
+      frames.push({
+        t,
+        lm: pose.map((p) => ({ x: p.x, y: p.y, z: p.z, visibility: p.visibility })),
+        world: world ? world.map((p) => ({ x: p.x, y: p.y, z: p.z })) : null,
+      });
+    }
+    if (plate) {
+      const g = grab();
+      if (!tracker) {
+        tracker = createTracker(g, cw, ch, plate.cx * ds, plate.cy * ds, plate.rPx * ds);
+        bar.push({ t, x: plate.cx / H, y: plate.cy / H, lost: false });
+      } else {
+        const r = tracker.update(g);
+        bar.push({ t, x: r.x / ds / H, y: r.y / ds / H, lost: r.lost });
+      }
+    }
     onProgress?.(t / duration, `프레임 분석 중… ${Math.round((t / duration) * 100)}%`);
   }
   onProgress?.(1, '분석 완료');
-  return frames;
+  return { frames, bar };
 }
 
-const BONES = [['shoulder', 'elbow'], ['elbow', 'wrist'], ['shoulder', 'hip'], ['hip', 'knee'], ['knee', 'ankle'], ['ankle', 'toe']];
+const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [29, 31], [27, 31], [28, 30], [30, 32], [28, 32]];
 
-// 핵심 프레임에 측면 골격 그리기
-export async function drawKeyFrame(video, canvas, pts, frameIdx, aspect, label) {
-  const f = pts[frameIdx];
-  if (!f) return;
-  await seek(video, f.t);
+// 핵심 프레임에 골격 + 바벨 궤적 그리기
+export async function drawKeyFrame(video, canvas, frame, label, barPath = null) {
+  if (!frame) return;
+  await seek(video, frame.t);
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const X = (p) => (p.x / aspect) * canvas.width;
+  const X = (p) => p.x * canvas.width;
   const Y = (p) => p.y * canvas.height;
   const w = Math.max(3, canvas.width / 150);
   ctx.lineWidth = w;
-  ctx.strokeStyle = '#22d3ee';
   for (const [a, b] of BONES) {
+    const pa = frame.lm[a];
+    const pb = frame.lm[b];
+    if ((pa.visibility ?? 1) < 0.3 || (pb.visibility ?? 1) < 0.3) continue;
+    ctx.strokeStyle = a % 2 === 1 && b % 2 === 1 ? '#22d3ee' : a % 2 === 0 && b % 2 === 0 ? '#f472b6' : '#e2e8f0';
     ctx.beginPath();
-    ctx.moveTo(X(f.p[a]), Y(f.p[a]));
-    ctx.lineTo(X(f.p[b]), Y(f.p[b]));
+    ctx.moveTo(X(pa), Y(pa));
+    ctx.lineTo(X(pb), Y(pb));
     ctx.stroke();
   }
-  ctx.fillStyle = '#f472b6';
-  for (const p of Object.values(f.p)) {
+  // 바벨 궤적 (정규화 좌표: 영상 높이 기준)
+  if (barPath?.length) {
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = w * 0.8;
     ctx.beginPath();
-    ctx.arc(X(p), Y(p), w * 1.6, 0, Math.PI * 2);
+    barPath.forEach((b, i) => {
+      const x = b.x * canvas.height;
+      const y = b.y * canvas.height;
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    const cur = barPath.reduce((a, b) => (Math.abs(b.t - frame.t) < Math.abs(a.t - frame.t) ? b : a), barPath[0]);
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.arc(cur.x * canvas.height, cur.y * canvas.height, w * 2.5, 0, Math.PI * 2);
     ctx.fill();
   }
-  // 무릎 높이 기준선 (스쿼트 깊이 확인용)
-  ctx.setLineDash([w * 2, w * 2]);
-  ctx.strokeStyle = '#facc15';
-  ctx.beginPath();
-  ctx.moveTo(0, Y(f.p.knee));
-  ctx.lineTo(canvas.width, Y(f.p.knee));
-  ctx.stroke();
-  ctx.setLineDash([]);
   if (label) {
     ctx.font = `${Math.round(canvas.width / 22)}px sans-serif`;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';

@@ -173,3 +173,22 @@ details.card > summary { cursor: pointer; list-style: none; }
 details.card > summary::-webkit-details-marker { display: none; }
 .run-card .score .num { width: 56px; height: 56px; font-size: 1.2rem; border-width: 4px; }
 #garminRuns h2 { margin: 0; }
+.guide { background: var(--info-bg); padding: 8px 10px; border-radius: 8px; font-size: 0.88rem; margin: 8px 0; }
+.plate-step { background: var(--warn-bg); padding: 8px 10px; border-radius: 8px; font-size: 0.88rem; margin: 8px 0; }
+.video-wrap.picking canvas { pointer-events: auto; cursor: crosshair; }
+.threshold-editor { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin: 10px 0; }
+.threshold-editor h4 { grid-column: 1 / -1; margin: 8px 0 0; font-size: 0.9rem; }
+.threshold-editor label { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+.threshold-editor input { width: 90px; }
+.threshold-editor input.custom { border-color: var(--primary); }
+.chart { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.chart .grid { stroke: var(--line); }
+.chart .line { fill: none; stroke-width: 2; }
+.chart .dot { stroke: var(--card); stroke-width: 1.5; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.diag { border-left: 4px solid var(--bad); padding: 6px 10px; margin: 8px 0; background: var(--bad-bg); border-radius: 0 8px 8px 0; font-size: 0.92rem; }
+details.rep > summary { list-style: none; cursor: pointer; }
+details.rep > summary::-webkit-details-marker { display: none; }
+details.rep:not([open]) h4 { margin: 0; }

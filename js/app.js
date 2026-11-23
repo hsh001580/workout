@@ -1,6 +1,9 @@
 import { load, save, todayISO, uid, defaultState } from './storage.js';
 import { buildWeek, weekIndex, sessionFor, fmtPace, fmtDuration, parseTime } from './program.js';
-import { analyze, CHECKLIST, checklistScore, LIFT_LABEL } from './form-analysis.js';
+import { CHECKLIST, checklistScore, LIFT_LABEL } from './form-analysis.js';
+import { evaluateForm, VIEWS } from './form-eval.js';
+import { getThresholds, PRESETS, THRESHOLD_META } from './thresholds.js';
+import { estimate1RM } from './bar-analysis.js';
 import { evaluateRun, runStats, RUN_TYPES } from './run-analysis.js';
 import { fetchGarmin, toRunLog } from './garmin.js';
 
@@ -127,6 +130,8 @@ function renderToday() {
 }
 
 // ---------- 자세 평가 ----------
+const T = () => getThresholds(state.settings);
+
 function renderChecklist() {
   const lift = $('#formLift').value;
   $('#formChecklist').innerHTML = CHECKLIST[lift].map((c, i) => `<label><input type="checkbox" data-ck="${i}" /> ${esc(c)}</label>`).join('');
@@ -138,18 +143,68 @@ function prefillForm() {
   const it = sessionFor(state.settings, new Date(), stats()).items.find((i) => i.type === 'lift' && i.lift === lift);
   if (it) { $('#formReps').value = it.reps; $('#formWeight').value = it.kg; }
 }
-$('#formLift').addEventListener('change', prefillForm);
+function updateGuide() {
+  const v = $('#formView').value;
+  const benchNote = $('#formLift').value === 'bench' && v === 'oblique' ? ' (벤치: 머리 쪽 위 대각선)' : '';
+  $('#viewGuide').textContent = `📷 ${VIEWS[v].guide}${benchNote}`;
+}
+$('#formLift').addEventListener('change', () => { prefillForm(); updateGuide(); });
+$('#formView').addEventListener('change', () => { state.settings.formView = $('#formView').value; persist(); updateGuide(); });
 
 let videoFile = null;
+let plate = null;
+let plateClicks = [];
+
+function drawPlateMarks() {
+  const v = $('#formVideoEl');
+  const c = $('#formCanvas');
+  c.width = v.videoWidth;
+  c.height = v.videoHeight;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const w = Math.max(3, c.width / 200);
+  ctx.strokeStyle = '#facc15';
+  ctx.fillStyle = '#facc15';
+  ctx.lineWidth = w;
+  if (plateClicks[0]) { ctx.beginPath(); ctx.arc(plateClicks[0].x, plateClicks[0].y, w * 2, 0, Math.PI * 2); ctx.fill(); }
+  if (plate) { ctx.beginPath(); ctx.arc(plate.cx, plate.cy, plate.rPx, 0, Math.PI * 2); ctx.stroke(); }
+  $('#plateState').textContent = plate ? `✓ 원판 지정됨 (반지름 ${Math.round(plate.rPx)}px)` : plateClicks.length ? '② 원판 위쪽 가장자리를 탭하세요' : '① 원판 중심을 탭하세요';
+}
+function resetPlate() {
+  plate = null;
+  plateClicks = [];
+  $('#videoWrap').classList.add('picking');
+  drawPlateMarks();
+}
+$('#plateReset').addEventListener('click', resetPlate);
+$('#formCanvas').addEventListener('click', (e) => {
+  if (!$('#videoWrap').classList.contains('picking')) return;
+  const v = $('#formVideoEl');
+  const rect = e.target.getBoundingClientRect();
+  const pt = { x: ((e.clientX - rect.left) / rect.width) * v.videoWidth, y: ((e.clientY - rect.top) / rect.height) * v.videoHeight };
+  plateClicks.push(pt);
+  if (plateClicks.length === 2) {
+    const [c, edge] = plateClicks;
+    const r = Math.abs(edge.y - c.y) || Math.hypot(edge.x - c.x, edge.y - c.y); // 대각선 촬영 시 세로 반지름이 실제 반지름
+    if (r > 5) {
+      plate = { cx: c.x, cy: c.y, rPx: r };
+      $('#videoWrap').classList.remove('picking');
+    } else plateClicks = [];
+  }
+  drawPlateMarks();
+});
+
 $('#formVideo').addEventListener('change', async (e) => {
   videoFile = e.target.files[0] || null;
-  const canvas = $('#formCanvas');
-  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-  if (!videoFile) { $('#videoWrap').classList.add('hidden'); return; }
+  plate = null;
+  plateClicks = [];
+  if (!videoFile) { $('#videoWrap').classList.add('hidden'); $('#plateStep').classList.add('hidden'); return; }
   const { loadVideo } = await import('./pose.js');
   try {
     await loadVideo($('#formVideoEl'), videoFile);
     $('#videoWrap').classList.remove('hidden');
+    $('#plateStep').classList.remove('hidden');
+    resetPlate();
   } catch (err) {
     alert(err.message);
     videoFile = null;
@@ -163,12 +218,23 @@ function setProgress(p, text) {
   el.querySelector('span').textContent = text;
 }
 
-const METRIC_KO = { depth: '깊이비', torso: '상체각', knee: '무릎각', elbow: '팔꿈치각', pause: '정지', kneeStart: '시작 무릎각', hipStart: '시작 고관절각', hipTop: '락아웃 고관절각', layback: '상체 젖힘' };
-const METRIC_UNIT = { depth: '', pause: '초' };
+const METRIC = {
+  depth: ['깊이비', ''], torso: ['상체각', '°'], knee: ['무릎각', '°'], elbow: ['팔꿈치각', '°'], pause: ['정지', '초'],
+  kneeStart: ['시작 무릎각', '°'], hipStart: ['시작 고관절각', '°'], hipTop: ['락아웃 고관절각', '°'], layback: ['상체 젖힘', '°'],
+  mcv: ['평균 속도', 'm/s'], peak: ['최고 속도', 'm/s'], midfootCm: ['미드풋 편차', 'cm'], hipMA: ['고관절 모멘트암', 'cm'],
+  kneeMA: ['무릎 모멘트암', 'cm'], hipMARise: ['고관절 MA 증가', '%'], lockoutOffsetCm: ['락아웃 바-어깨', 'cm'], travelCm: ['바 수평 이동', 'cm'],
+  braceSec: ['반복 전 정지', '초'], trunkShrink: ['몸통 단축', '%'], torsoJerk: ['상체 급변', '°'],
+  valgusL: ['왼무릎 밸거스', '°'], valgusR: ['오른무릎 밸거스', '°'], kneeToe: ['무릎-발끝 차', '°'], heelCm: ['뒤꿈치 들림', 'cm'],
+  flexAsym: ['좌우 굴곡차', '°'], hipShiftCm: ['힙 시프트(+오른쪽)', 'cm'], pelvisTiltCm: ['골반 높이차', 'cm'], trunkRot: ['몸통 회전', '°'],
+  barTiltCm: ['바 기울기', 'cm'], flare: ['팔꿈치 벌어짐', '°'], lateralLean: ['옆 기울기', '°'],
+};
+const metricHTML = (m) => Object.entries(m).filter(([, v]) => v != null && Number.isFinite(v))
+  .map(([k, v]) => `<span>${METRIC[k]?.[0] || k} <b>${v}${METRIC[k]?.[1] ?? ''}</b></span>`).join('');
 
 $('#formAnalyze').addEventListener('click', async () => {
   const btn = $('#formAnalyze');
   const lift = $('#formLift').value;
+  const view = $('#formView').value;
   const checks = [...document.querySelectorAll('[data-ck]')];
   const checked = checks.filter((c) => c.checked).length;
   const rpe = Number($('#formRpe').value) || null;
@@ -182,11 +248,15 @@ $('#formAnalyze').addEventListener('click', async () => {
       const pose = await import('./pose.js');
       const v = $('#formVideoEl');
       const aspect = v.videoWidth / v.videoHeight;
-      const frames = await pose.extractFrames(v, setProgress);
-      video = analyze(frames, lift, aspect);
+      const { frames, bar } = await pose.extractFrames(v, setProgress, { plate });
+      const scale = plate ? (Number($('#plateDiam').value || 45) / 200) / (plate.rPx / v.videoHeight) : 0;
+      video = evaluateForm({ frames, lift, view, aspect, T: T(), bar: bar ? { track: bar, scale } : null });
       if (video.ok) {
         const worst = video.reps.reduce((a, r) => (r.score < a.score ? r : a), video.reps[0]);
-        await pose.drawKeyFrame(v, $('#formCanvas'), video.pts, worst.keyFrame, aspect, `${worst.rep}회차 ${lift === 'deadlift' ? '시작 자세' : lift === 'ohp' ? '시작 자세' : '최저점'}`);
+        const kt = video.pts[worst.keyFrame].t;
+        const raw = frames.reduce((a, f) => (Math.abs(f.t - kt) < Math.abs(a.t - kt) ? f : a), frames[0]);
+        const label = `${worst.rep}회차 ${lift === 'deadlift' || lift === 'ohp' ? '시작 자세' : '최저점'}`;
+        await pose.drawKeyFrame(v, $('#formCanvas'), raw, label, video.barResult?.series);
       }
     } catch (err) {
       video = { ok: false, error: `영상 분석 실패: ${err.message}. 인터넷 연결을 확인하거나 체크리스트로만 평가하세요.` };
@@ -201,30 +271,39 @@ $('#formAnalyze').addEventListener('click', async () => {
   if (pain) tips.push({ level: 'bad', text: '통증 발생: 다음 세션은 무게를 10~20% 줄이고, 통증이 지속되면 전문가 상담' });
   if (rpe >= 9.5) tips.push({ level: 'warn', text: `RPE ${rpe}: 처방보다 힘듦. 다음 세션 무게를 2.5~5kg 낮추세요.` });
   else if (rpe && rpe <= 7) tips.push({ level: 'good', text: `RPE ${rpe}: 여유 있음. 다음 주기 증량 순조로움.` });
+  if (rpe && video?.ok && video.stats.rir != null) {
+    const vRpe = 10 - video.stats.rir;
+    if (Math.abs(vRpe - rpe) >= 1.5) tips.push({ level: 'info', text: `체감 RPE ${rpe} vs 속도 기반 추정 RPE ${vRpe.toFixed(1)}: 차이가 큽니다. 기록이 쌓이면 개인 속도 기준이 정확해집니다.` });
+  }
   missed.forEach((m) => tips.push({ level: 'warn', text: `다음 세트 집중 큐: ${m}` }));
 
   const log = {
-    id: uid(), date: todayISO(), lift,
+    id: uid(), date: todayISO(), lift, view,
     weight: $('#formWeight').value, reps: $('#formReps').value, rpe, pain,
     note: $('#formNote').value.trim(),
     score, selfScore, videoScore: video?.ok ? video.score : null,
-    videoSummary: video?.ok ? [...video.summary, ...video.reps.flatMap((r) => r.issues.filter((i) => i.level === 'bad'))].slice(0, 5) : [],
+    stats: video?.ok ? video.stats : null,
+    mcvs: video?.ok ? video.reps.map((r) => (r.mcv ? +r.mcv.toFixed(3) : null)) : null,
+    videoSummary: video?.ok ? [...video.summary, ...video.reps.flatMap((r) => r.issues.filter((i) => i.level === 'bad'))].slice(0, 6) : [],
     tips,
   };
   state.formLogs.push(log);
   persist();
 
+  const diag = video?.ok ? video.reps.flatMap((r) => r.issues.filter((i) => i.text.startsWith('스티킹 포인트')).map((i) => `${r.rep}회차 · ${i.text}`)) : [];
   $('#formResult').innerHTML = `<div class="card">
     <div class="score"><div class="num ${scoreClass(score)}">${score}</div>
       <div><h2>${esc(LIFT_LABEL[lift])} ${log.weight ? esc(log.weight) + 'kg' : ''} ${log.reps ? '× ' + esc(log.reps) : ''}</h2>
-      <div class="muted">${video?.ok ? `영상 ${video.score}점 (70%) + 체크리스트 ${selfScore}점 (30%)` : `체크리스트 ${selfScore}점`}</div></div></div>
+      <div class="muted">${video?.ok ? `${esc(VIEWS[view].name)} · 영상 ${video.score}점 (70%) + 체크리스트 ${selfScore}점 (30%)` : `체크리스트 ${selfScore}점`}</div></div></div>
     ${video && !video.ok ? fbList([{ level: 'warn', text: video.error }]) : ''}
+    ${diag.length ? `<h3>힘이 새는 지점</h3>${diag.map((d) => `<div class="diag">${esc(d)}</div>`).join('')}` : ''}
     ${video?.ok ? `<h3>세트 요약</h3>${fbList(video.summary.length ? video.summary : [{ level: 'info', text: `${video.reps.length}회 반복 인식` }])}
-      <h3>반복별 분석</h3><div class="reps">${video.reps.map((r) => `<div class="rep">
-        <h4><span>${r.rep}회차</span><span class="badge ${scoreClass(r.score)}">${r.score}</span></h4>
-        <div class="kv">${Object.entries(r.metrics).map(([k, v]) => `<span>${METRIC_KO[k] || k} <b>${v}${METRIC_UNIT[k] ?? '°'}</b></span>`).join('')}
-        ${r.ascent != null ? `<span>상승 <b>${r.ascent.toFixed(2)}초</b></span>` : ''}</div>
-        ${fbList(r.issues)}</div>`).join('')}</div>` : ''}
+      ${!plate ? '<p class="muted">원판을 지정하면 바벨 속도·스티킹 포인트·모멘트암도 분석합니다.</p>' : ''}
+      <h3>반복별 분석</h3><p class="muted">가장 낮은 점수의 반복만 펼쳐 둡니다. 눌러서 다른 반복을 확인하세요.</p>
+      <div class="reps">${video.reps.map((r) => `<details class="rep" ${r.score === Math.min(...video.reps.map((x) => x.score)) ? 'open' : ''}>
+        <summary><h4><span>${r.rep}회차${r.mcv ? ` · ${r.mcv.toFixed(2)}m/s` : ''}</span><span class="badge ${scoreClass(r.score)}">${r.score}</span></h4></summary>
+        <div class="kv">${metricHTML(r.metrics)}${r.ascent != null ? `<span>상승 시간 <b>${r.ascent.toFixed(2)}초</b></span>` : ''}</div>
+        ${fbList(r.issues.filter((i) => !i.text.startsWith('스티킹 포인트')))}</details>`).join('')}</div>` : ''}
     ${tips.length ? `<h3>코칭</h3>${fbList(tips)}` : ''}
   </div>`;
   $('#formResult').scrollIntoView({ behavior: 'smooth' });
@@ -377,18 +456,67 @@ async function syncGarmin(manual = false) {
 // ---------- 기록 ----------
 function avg(arr) { return arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : '-'; }
 
+// 간단한 꺾은선 차트 (세션 순서가 x축)
+function lineChart(labels, series, unit = '') {
+  const W = 600;
+  const H = 170;
+  const pad = { l: 40, r: 10, t: 10, b: 24 };
+  const all = series.flatMap((s) => s.values).filter(Number.isFinite);
+  if (!all.length || labels.length < 2) return '<p class="muted">기록이 2개 이상 쌓이면 그래프가 표시됩니다.</p>';
+  let lo = Math.min(...all);
+  let hi = Math.max(...all);
+  if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+  const span = hi - lo;
+  lo -= span * 0.1; hi += span * 0.1;
+  const x = (i) => pad.l + (i * (W - pad.l - pad.r)) / (labels.length - 1);
+  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  const ticks = [lo + (hi - lo) * 0.1, (lo + hi) / 2, hi - (hi - lo) * 0.1];
+  const fmt = (v) => (Math.abs(hi - lo) < 5 ? v.toFixed(2) : Math.round(v));
+  const grid = ticks.map((t) => `<line class="grid" x1="${pad.l}" x2="${W - pad.r}" y1="${y(t)}" y2="${y(t)}"/><text x="${pad.l - 6}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('');
+  const xl = `<text x="${x(0)}" y="${H - 6}">${esc(labels[0])}</text><text x="${x(labels.length - 1)}" y="${H - 6}" text-anchor="end">${esc(labels[labels.length - 1])}</text>`;
+  const lines = series.map((s) => {
+    const pts = s.values.map((v, i) => (Number.isFinite(v) ? [x(i), y(v)] : null));
+    let d = '';
+    let pen = false;
+    pts.forEach((p) => { if (!p) { pen = false; return; } d += `${pen ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`; pen = true; });
+    const dots = pts.filter(Boolean).map((p) => `<circle class="dot" cx="${p[0]}" cy="${p[1]}" r="3.5" fill="${s.color}"/>`).join('');
+    return `<path class="line" d="${d}" stroke="${s.color}"/>${dots}`;
+  }).join('');
+  const legend = `<div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}${unit ? ` (${unit})` : ''}</span>`).join('')}</div>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${grid}${xl}${lines}</svg>${legend}`;
+}
+
+let historyLift = 'squat';
 function renderHistory() {
   const forms = [...state.formLogs].sort((a, b) => b.date.localeCompare(a.date));
   const runs = [...state.runLogs].sort((a, b) => b.date.localeCompare(a.date));
   const byLift = (l) => state.formLogs.filter((f) => f.lift === l).slice(-5).map((f) => f.score);
+  const lf = state.formLogs.filter((f) => f.lift === historyLift);
+  const labels = lf.map((f) => f.date.slice(5));
+  const e1rm = estimate1RM(lf.filter((f) => f.stats?.bestMcv && f.weight).map((f) => ({ kg: Number(f.weight), mcv: f.stats.bestMcv })), historyLift);
+  const C = { a: 'var(--lift)', b: 'var(--hyp)', c: 'var(--run)' };
+
   $('#tab-history').innerHTML = `
     <div class="card"><h2>최근 추세</h2><div class="stats">
       ${['squat', 'bench', 'deadlift', 'ohp'].map((l) => `<div class="stat"><div class="l">${LIFT_LABEL[l]} 최근 5회</div><div class="v">${avg(byLift(l))}</div></div>`).join('')}
       <div class="stat"><div class="l">러닝 최근 5회</div><div class="v">${avg(state.runLogs.slice(-5).map((r) => r.result.score))}</div></div>
     </div></div>
+    <div class="card">
+      <div class="row between"><h2>종목별 추이</h2>
+        <select id="historyLift">${['squat', 'bench', 'deadlift', 'ohp'].map((l) => `<option value="${l}" ${l === historyLift ? 'selected' : ''}>${LIFT_LABEL[l]}</option>`).join('')}</select></div>
+      ${e1rm ? `<p><b>속도 기반 추정 1RM: ${e1rm}kg</b> <span class="muted">(무게별 최고 속도로 계산한 하중-속도 관계, 참고용)</span></p>` : '<p class="muted">원판을 지정해 서로 다른 무게로 2번 이상 기록하면 속도 기반 1RM을 추정합니다.</p>'}
+      <h3>자세 점수</h3>${lineChart(labels, [{ name: '점수', color: C.a, values: lf.map((f) => f.score) }])}
+      <h3>좌우 움직임 (대각선·정면 촬영)</h3>${lineChart(labels, [
+        { name: '최대 무릎 밸거스', color: C.b, values: lf.map((f) => f.stats?.valgus ?? NaN) },
+        { name: '힙 시프트', color: C.c, values: lf.map((f) => (f.stats?.hipShiftCm != null ? Math.abs(f.stats.hipShiftCm) : NaN)) },
+      ])}<p class="muted">밸거스는 °, 힙 시프트는 cm</p>
+      <h3>바벨 속도</h3>${lineChart(labels, [
+        { name: '최고 평균속도', color: C.a, values: lf.map((f) => f.stats?.bestMcv ?? NaN) },
+      ], 'm/s')}
+    </div>
     <div class="card"><h2>자세 평가 기록</h2>${forms.length ? `<div class="table-wrap"><table>
-      <tr><th>날짜</th><th>종목</th><th>무게×반복</th><th>RPE</th><th>점수</th><th>주요 피드백</th><th></th></tr>
-      ${forms.map((f) => `<tr><td>${esc(f.date)}</td><td>${esc(LIFT_LABEL[f.lift])}</td><td>${esc(f.weight || '-')}×${esc(f.reps || '-')}</td><td>${esc(f.rpe ?? '-')}</td>
+      <tr><th>날짜</th><th>종목</th><th>각도</th><th>무게×반복</th><th>RPE</th><th>점수</th><th>주요 피드백</th><th></th></tr>
+      ${forms.map((f) => `<tr><td>${esc(f.date)}</td><td>${esc(LIFT_LABEL[f.lift])}</td><td>${esc(VIEWS[f.view]?.name.split(' ')[0] || '-')}</td><td>${esc(f.weight || '-')}×${esc(f.reps || '-')}</td><td>${esc(f.rpe ?? '-')}</td>
         <td><span class="badge ${scoreClass(f.score)}">${f.score}</span></td>
         <td class="muted">${esc([...(f.videoSummary || []), ...(f.tips || [])].slice(0, 2).map((i) => i.text).join(' / ') || f.note || '')}</td>
         <td><button class="link" data-del-form="${f.id}">삭제</button></td></tr>`).join('')}
@@ -400,6 +528,7 @@ function renderHistory() {
         <td><span class="badge ${scoreClass(r.result.score)}">${r.result.score}</span></td>
         <td>${r.source === 'garmin' ? '' : `<button class="link" data-del-run="${r.id}">삭제</button>`}</td></tr>`).join('')}
     </table></div>` : '<p class="muted">아직 기록이 없습니다.</p>'}</div>`;
+  $('#historyLift').addEventListener('change', (e) => { historyLift = e.target.value; renderHistory(); });
   $('#tab-history').querySelectorAll('[data-del-form]').forEach((b) => b.addEventListener('click', () => {
     if (!confirm('이 기록을 삭제할까요?')) return;
     state.formLogs = state.formLogs.filter((f) => f.id !== b.dataset.delForm); persist(); renderHistory();
@@ -410,8 +539,50 @@ function renderHistory() {
   }));
 }
 
+// ---------- 자세 평가 기준 (프리셋) ----------
+function renderPreset() {
+  const sel = $('#formPreset');
+  const cur = state.settings.formPreset || 'balanced';
+  sel.innerHTML = Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  renderThresholdEditor(cur);
+}
+function renderThresholdEditor(presetKey) {
+  $('#presetDesc').textContent = PRESETS[presetKey].desc;
+  const base = getThresholds({ formPreset: presetKey });
+  const custom = state.settings.customThresholds || {};
+  let html = '';
+  let group = '';
+  for (const [k, meta] of Object.entries(THRESHOLD_META)) {
+    if (meta.group !== group) { group = meta.group; html += `<h4>${esc(group)}</h4>`; }
+    const v = custom[k] ?? base[k];
+    html += `<label>${esc(meta.label)} <input type="number" step="any" data-th="${k}" value="${v}" class="${k in custom ? 'custom' : ''}"/></label>`;
+  }
+  $('#thresholdEditor').innerHTML = html;
+}
+$('#formPreset').addEventListener('change', (e) => renderThresholdEditor(e.target.value));
+$('#resetThresholds').addEventListener('click', () => {
+  state.settings.customThresholds = {};
+  renderThresholdEditor($('#formPreset').value);
+});
+$('#savePreset').addEventListener('click', () => {
+  const key = $('#formPreset').value;
+  const base = getThresholds({ formPreset: key });
+  const custom = {};
+  document.querySelectorAll('[data-th]').forEach((i) => {
+    const v = Number(i.value);
+    if (i.value !== '' && Number.isFinite(v) && v !== base[i.dataset.th]) custom[i.dataset.th] = v;
+  });
+  state.settings.formPreset = key;
+  state.settings.customThresholds = custom;
+  persist();
+  renderThresholdEditor(key);
+  $('#presetMsg').textContent = `저장됨 (직접 수정 ${Object.keys(custom).length}개)`;
+  setTimeout(() => { $('#presetMsg').textContent = ''; }, 2500);
+});
+
 // ---------- 설정 ----------
 function fillSettings() {
+  renderPreset();
   const f = $('#settingsForm');
   for (const [k, v] of Object.entries(state.settings)) if (f.elements[k]) f.elements[k].value = v;
   $('#garminPass').value = state.garmin.passphrase;
@@ -472,7 +643,9 @@ $('#resetData').addEventListener('click', () => {
 // ---------- 초기화 ----------
 let firstVisit = false;
 try { firstVisit = !localStorage.getItem('workout-app-v1'); } catch { /* 저장소 사용 불가 */ }
+$('#formView').value = state.settings.formView || 'side';
 prefillForm();
+updateGuide();
 renderToday();
 if (firstVisit) {
   persist();
