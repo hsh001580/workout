@@ -18,7 +18,7 @@ export function evaluateForm({ frames, lift, view = 'side', aspect = 1, T = DEFA
   let sag;
   if (view === 'oblique') {
     if (!frames.some((f) => f.world)) return { ok: false, error: '3D 좌표를 얻지 못했습니다. 측면 모드로 분석해 주세요.' };
-    sag = analyze(sagittalFrames(frames), lift, 1, T);
+    sag = analyze(sagittalFrames(frames), lift, 1, { ...T, _oblique: true });
   } else {
     sag = analyze(frames, lift, aspect, T, { sagittal: view === 'side' });
   }
@@ -30,6 +30,7 @@ export function evaluateForm({ frames, lift, view = 'side', aspect = 1, T = DEFA
   if (view !== 'side') {
     const bodies = toBodyFrames(frames, view === 'oblique' ? '3d' : 'front', aspect);
     frontal = analyzeFrontal(bodies, reps, topTimes, lift, T);
+    if (frontal?.hidden.length) summary.push({ level: 'info', text: `가려져서 판정하지 못한 항목: ${frontal.hidden.join(', ')}. 해당 관절이 보이는 각도에서 촬영하면 평가됩니다.` });
     frontal?.reps.forEach((fr, i) => {
       reps[i].issues.push(...fr.issues);
       Object.assign(reps[i].metrics, fr.metrics);

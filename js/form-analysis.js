@@ -192,8 +192,10 @@ function analyzeBenchRep(pts, prevTop, bottom, nextTop, n, T) {
   if (nextTop != null) {
     const t = pts[nextTop].p;
     const lock = angle(t.shoulder, t.elbow, t.wrist);
-    if (lock < T.benchLockout) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
-    else issues.push(issue('good', '락아웃 완료'));
+    if (!T._oblique) {
+      if (lock < T.benchLockout) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
+      else issues.push(issue('good', '락아웃 완료'));
+    }
   }
   // 정지(퍼즈) 시간
   let pause = 0;
@@ -223,6 +225,7 @@ function analyzeOhpRep(pts, prevTop, bottom, nextTop, n, T) {
   const issues = [];
   const stack = Math.abs(p.wrist.x - p.elbow.x) / forearm;
   if (stack < 0.35) issues.push(issue('good', '시작 자세에서 전완이 수직'));
+  else if (T._oblique) issues.push(issue('info', '시작 자세에서 전완이 기울어 보임 (대각선 추정이라 그립 너비가 섞일 수 있음, 정측면 영상으로 확인 권장)'));
   else issues.push(issue('warn', '시작 자세에서 팔꿈치가 바 아래에 있지 않음: 팔꿈치를 바 바로 아래로'));
 
   const lo = prevTop ?? Math.max(0, bottom - 30);
@@ -234,19 +237,25 @@ function analyzeOhpRep(pts, prevTop, bottom, nextTop, n, T) {
   }));
   if (layback > T.ohpLaybackBad) issues.push(issue('bad', `상체를 과하게 젖힘 (${layback.toFixed(0)}°): 둔근·복근 조여 허리 보호`));
   else if (layback > T.ohpLaybackWarn) issues.push(issue('warn', `상체 젖힘 ${layback.toFixed(0)}°: 갈비뼈를 내리고 코어 고정`));
-  const minKnee = Math.min(...seg.map((f) => angle(f.p.hip, f.p.knee, f.p.ankle)));
-  if (minKnee < 160) issues.push(issue('warn', `무릎 반동 사용 (${minKnee.toFixed(0)}°): 스트릭트 프레스는 다리를 고정`));
+  // 무릎 반동: 반복 시작(랙 자세) 대비 무릎이 더 굽혀진 정도
+  const kneeRef = angle(p.hip, p.knee, p.ankle);
+  const conc = nextTop != null ? pts.slice(bottom, nextTop + 1) : seg;
+  const minKnee = Math.min(...conc.map((f) => angle(f.p.hip, f.p.knee, f.p.ankle)));
+  const dip = kneeRef - minKnee;
+  if (dip > T.kneeDipDeg) issues.push(issue('warn', `무릎 반동 사용 (시작 대비 ${dip.toFixed(0)}° 굽힘): 스트릭트 프레스는 다리를 고정`));
 
   if (nextTop != null) {
     const t = pts[nextTop].p;
     const lock = angle(t.shoulder, t.elbow, t.wrist);
     const over = Math.abs(t.wrist.x - midfoot(t)) / torso;
-    if (lock < T.lockoutAngle) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
-    else issues.push(issue('good', '락아웃 완료'));
+    if (!T._oblique) {
+      if (lock < T.lockoutAngle) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
+      else issues.push(issue('good', '락아웃 완료'));
+    }
     if (over > 0.25) issues.push(issue('warn', '락아웃에서 바가 미드풋 위에 있지 않음: 머리를 바 아래로 밀어 넣기'));
   }
   return {
-    metrics: { layback: Math.max(0, Math.round(layback)), knee: Math.round(minKnee) },
+    metrics: { layback: Math.max(0, Math.round(layback)), kneeDip: Math.max(0, Math.round(dip)) },
     issues,
     conc: nextTop != null ? [pts[bottom].t, pts[nextTop].t] : null,
     ecc: prevTop != null ? [pts[prevTop].t, pts[bottom].t] : null,
@@ -317,8 +326,8 @@ function bracing(pts, n, rep, refTrunk, lift, T) {
   if (t0 == null || t1 == null) return { issues: out, metrics };
   const seg = pts.filter((f) => f.t >= t0 && f.t <= t1);
   if (seg.length < 3) return { issues: out, metrics };
-  // 2) 몸통 길이 감소: 척추가 굽거나 복압이 풀려 몸통이 접힘 (벤치는 아치 때문에 제외)
-  if (lift !== 'bench' && refTrunk) {
+  // 2) 몸통 길이 감소: 척추가 굽거나 복압이 풀려 몸통이 접힘 (벤치는 아치, OHP는 어깨 으쓱 때문에 제외)
+  if ((lift === 'squat' || lift === 'deadlift') && refTrunk) {
     const minTrunk = Math.min(...seg.map((f) => dist(f.p.shoulder, f.p.hip)));
     const shrink = ((refTrunk - minTrunk) / refTrunk) * 100;
     metrics.trunkShrink = Math.max(0, Math.round(shrink));
@@ -365,7 +374,7 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
     } else if (ev.type === 'bottom' && (prev || next)) {
       const pt = prev && prev.type === 'top' ? prev.i : null;
       const nt = next && next.type === 'top' ? next.i : null;
-      if (pt == null && nt == null) continue;
+      if (nt == null) continue; // 올라오는 구간이 없는 마지막 하강(랙에 내려놓기)은 반복이 아님
       const fn = { squat: analyzeSquatRep, bench: analyzeBenchRep, ohp: analyzeOhpRep }[lift];
       reps.push(fn(pts, pt, ev.i, nt, n, T));
     }
@@ -401,7 +410,7 @@ export function finalize(reps, summary) {
   reps.forEach((r) => { r.score = scoreIssues(r.issues); });
   const counts = {};
   reps.forEach((r) => r.issues.forEach((i) => {
-    if (i.level === 'bad' || i.level === 'warn') {
+    if ((i.level === 'bad' || i.level === 'warn') && !i.text.startsWith('스티킹 포인트')) {
       const key = i.text.replace(/[\d.]+/g, '#');
       counts[key] = counts[key] || { n: 0, text: i.text };
       counts[key].n++;

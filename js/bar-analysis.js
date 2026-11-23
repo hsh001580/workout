@@ -184,7 +184,7 @@ export function analyzeBar(series, reps, pts, opts) {
       if (f?.valgus > T.valgusWarn) causes.push(`무릎 안쪽으로 ${f.valgus.toFixed(0)}° 모임`);
       if (f?.hipShiftCm > T.hipShiftWarnCm) causes.push(`골반 ${f.hipShiftDir}으로 ${f.hipShiftCm.toFixed(1)}cm 이동`);
       const where = { squat: '무릎 높이 근처', deadlift: '무릎 근처', bench: '가슴에서 조금 위', ohp: '이마 높이 근처' }[lift] || '';
-      out.issues.push(issue(causes.length ? 'bad' : 'warn',
+      out.issues.push(issue(causes.length ? 'bad' : 'info',
         `스티킹 포인트: 상승 ${c.sticking.heightPct}% 지점(${where})에서 속도 ${c.sticking.v.toFixed(2)}m/s로 급감`
         + (causes.length ? ` → 힘이 새는 원인: ${causes.join(', ')}` : '. 자세 붕괴 없이 근력 한계 구간: 해당 구간 보강(퍼즈·핀 운동) 권장')));
     }

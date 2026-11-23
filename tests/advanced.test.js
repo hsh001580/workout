@@ -114,3 +114,23 @@ test('후방 45° 3D: 오른 무릎 밸거스와 힙 시프트 감지', () => {
   assert.ok(Math.abs(res.stats.hipShiftCm - 6) < 1, `shift ${res.stats.hipShiftCm}`);
   assert.ok(res.score < 90);
 });
+
+test('가려진 쪽 관절은 판정에서 제외 (실제 영상 회귀)', () => {
+  // 오른쪽 몸이 가려진 상황: 오른쪽 관절 신뢰도 0.1 + 좌표 엉터리
+  const frames = squatSet({ valgusR: 0.14 }).map((f) => {
+    const lm = f.lm.map((p, i) => ([12, 14, 16, 24, 26, 28, 30, 32].includes(i) ? { ...p, visibility: 0.1 } : p));
+    const world = f.world.map((p, i) => ([26, 28, 16].includes(i) ? { ...p, x: p.x + Math.random() * 0.3 } : p));
+    return { ...f, lm, world };
+  });
+  const res = evaluateForm({ frames, lift: 'squat', view: 'oblique' });
+  assert.ok(res.ok, res.error);
+  const texts = res.reps.flatMap((r) => r.issues.map((i) => i.text)).join('\n');
+  assert.doesNotMatch(texts, /오른쪽 무릎이 안쪽으로/);
+  assert.ok(res.reps.every((r) => r.metrics.valgusR == null));
+});
+
+test('마지막 하강(랙에 내려놓기)은 반복으로 세지 않음', () => {
+  const frames = squatSet({}, 3).concat(Array.from({ length: 20 }, (_, i) => ({ t: (121 + i) / 15, ...person(Math.sin((Math.PI * i) / 40)) })));
+  const res = evaluateForm({ frames, lift: 'squat', view: 'oblique' });
+  assert.equal(res.reps.length, 3);
+});

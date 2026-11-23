@@ -34,6 +34,7 @@ export const THRESHOLD_META = {
   trunkShrinkPct: { label: '몸통 길이 감소 경고 (%)', group: '브레이싱' },
   rebraceSec: { label: '반복 사이 재브레이싱 최소 시간 (초)', group: '브레이싱' },
   torsoJerkDeg: { label: '상체 순간 무너짐 (°/0.2초)', group: '브레이싱' },
+  kneeDipDeg: { label: 'OHP 무릎 반동 (시작 대비 굽힘 °)', group: '측면' },
 };
 
 const BASE = {
@@ -43,8 +44,8 @@ const BASE = {
   hipShootDeg: 10,
   benchLockout: 155,
   benchPauseRequired: 0,
-  ohpLaybackWarn: 8,
-  ohpLaybackBad: 15,
+  ohpLaybackWarn: 12,
+  ohpLaybackBad: 20,
   lockoutAngle: 160,
   midfootWarnCm: 5,
   midfootBadCm: 8,
@@ -64,6 +65,7 @@ const BASE = {
   lateralLeanWarn: 6,
   trunkShrinkPct: 6,
   rebraceSec: 0.4,
+  kneeDipDeg: 10,
   torsoJerkDeg: 6,
 };
 
