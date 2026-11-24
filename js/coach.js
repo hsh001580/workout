@@ -29,6 +29,18 @@ export const BLOCK = [
   { key: 'real', name: '실현 (최대 근력)', reps: [2], rpe: [8.5], back: [2], backReps: [3], drop: 0.1, hyp: 0.6, runMul: [0.9], quality: ['strides'], single: true },
   { key: 'deload', name: '디로드 (회복)', reps: [5], rpe: [6], back: [1], backReps: [5], drop: 0.1, hyp: 0.5, runMul: [0.7], quality: ['strides'], deload: true },
 ];
+// 데드리프트 전용 반복 체계: 바닥에서 시작해 반복 사이 탄성 도움이 없고 허리·전신 피로가 커서
+// 현역 프로그램(RTS·Juggernaut 등)처럼 세트당 1~5회, 백오프도 적게. 볼륨은 변형 운동(RDL 등)으로 보충
+export const LIFT_SCHEME = {
+  deadlift: {
+    acc: { reps: [5, 5, 4], back: [2, 3, 3], backReps: [4, 4, 3] },
+    int: { reps: [3, 3, 2], back: [2, 2, 1], backReps: [3, 2, 2] },
+    real: { reps: [2], back: [1], backReps: [2] },
+    deload: { reps: [3], back: [1], backReps: [3] },
+  },
+};
+const LIFT_CAP = { deadlift: { reps: 5, backReps: 5, backSets: 3 } };
+
 const BLOCK_WEEKS = BLOCK.flatMap((b, bi) => b.reps.map((_, wi) => ({ bi, wi })));
 
 /** 주차(0부터)의 블록 단계. coachState.deloadWeeks에 있는 주는 강제 디로드, 디로드 다음 주부터 새 블록 */
@@ -260,10 +272,12 @@ export function prescribe(lift, ctx) {
   const cues = [];
   const { e1rm, source } = liftE1rm(lift, logs, settings, date);
   const wi = Math.min(phase.wi, phase.reps.length - 1);
-  let reps = phase.reps[wi];
+  const sch = LIFT_SCHEME[lift]?.[phase.key];
+  const at = (arr) => arr[Math.min(wi, arr.length - 1)];
+  let reps = at(sch?.reps || phase.reps);
   let rpe = phase.rpe[wi];
-  let backSets = phase.back[wi];
-  let backReps = phase.backReps[wi];
+  let backSets = at(sch?.back || phase.back);
+  let backReps = at(sch?.backReps || phase.backReps);
   let drop = phase.drop;
   let name = LIFT_KO[lift];
 
@@ -316,6 +330,8 @@ export function prescribe(lift, ctx) {
     reasons.push(`${painArea ? painArea + ' 통증' : '지난 세션 통증'} → ${painSwap}로 대체, 무게 20%↓, RPE 7 상한`);
   }
 
+  const cap = LIFT_CAP[lift];
+  if (cap) { reps = Math.min(reps, cap.reps); backReps = Math.min(backReps, cap.backReps); backSets = Math.min(backSets, cap.backSets); }
   rpe = Math.max(5.5, Math.round(rpe * 2) / 2);
   let kg = loadFor(e1rm, reps, rpe);
   if (painSwap) { name = painSwap; kg = round25(kg * 0.8); rpe = Math.min(rpe, 7); }
@@ -335,6 +351,7 @@ export function prescribe(lift, ctx) {
       }
     }
   }
+  if (cap) backSets = Math.min(backSets, cap.backSets);
   const backKg = round25(kg * (1 - drop));
 
   // 7) 자세 결함·스티킹 포인트 → 변형 운동 / 큐 / 보조
