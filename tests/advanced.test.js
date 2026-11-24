@@ -134,3 +134,27 @@ test('마지막 하강(랙에 내려놓기)은 반복으로 세지 않음', () =
   const res = evaluateForm({ frames, lift: 'squat', view: 'oblique' });
   assert.equal(res.reps.length, 3);
 });
+
+// 카메라 방향만 바뀐 같은 동작: world 좌표를 수직축으로 회전 (MediaPipe world는 카메라 기준 좌표)
+function rotateYaw(frames, deg) {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  return frames.map((f) => ({ ...f, world: f.world.map((p) => ({ x: p.x * c + p.z * s, y: p.y, z: -p.x * s + p.z * c })) }));
+}
+
+test('전방·후방·측면 어느 방향에서 찍어도 같은 판정 (3D 몸 기준 좌표)', () => {
+  const base = squatSet({ valgusR: 0.14, shift: 0.06 });
+  const results = [0, 45, 135, 180, -135, -45].map((yaw) => {
+    const res = evaluateForm({ frames: rotateYaw(base, yaw), lift: 'squat', view: yaw === 135 || yaw === -135 || yaw === 180 ? 'obliqueFront' : 'oblique' });
+    assert.ok(res.ok, `${yaw}: ${res.error}`);
+    return { yaw, reps: res.reps.length, valgus: res.stats.valgus, shift: res.stats.hipShiftCm, depth: res.reps[0].metrics.depth };
+  });
+  for (const r of results) {
+    assert.equal(r.reps, 3, JSON.stringify(r));
+    assert.ok(Math.abs(r.valgus - results[0].valgus) <= 1, JSON.stringify(results));
+    assert.ok(Math.abs(r.shift - results[0].shift) <= 0.3, JSON.stringify(results));
+    assert.ok(Math.abs(r.depth - results[0].depth) <= 0.02, JSON.stringify(results));
+  }
+  assert.ok(results[0].valgus > 12 && results[0].shift > 5);
+});

@@ -5,9 +5,13 @@ import { barSeries, analyzeBar } from './bar-analysis.js';
 import { DEFAULT_THRESHOLDS } from './thresholds.js';
 import { findActiveWindow } from './set-window.js';
 
+// 대각선(전방·후방)은 3D 추정 경로를 쓴다
+export const is3dView = (v) => v === 'oblique' || v === 'obliqueFront';
+
 export const VIEWS = {
   side: { name: '측면 (90°)', guide: '정측면, 엉덩이 높이. 깊이·상체각·바 경로·모멘트암을 가장 정확히 봅니다.' },
-  oblique: { name: '후방 대각선 (45°)', guide: '뒤쪽 45°, 엉덩이 높이에 고정. 3D 추정으로 측면 항목과 무릎·골반 좌우 움직임을 함께 봅니다. 벤치는 머리 쪽 위 대각선에서 촬영.' },
+  oblique: { name: '후방 대각선 (45°)', guide: '뒤쪽 45°, 엉덩이 높이에 고정. 3D 추정으로 측면 항목과 무릎·골반 좌우 움직임을 함께 봅니다. 골반·허리 라인이 잘 보입니다. 벤치는 머리 쪽 위 대각선에서 촬영.' },
+  obliqueFront: { name: '전방 대각선 (45°)', guide: '앞쪽 45°, 엉덩이 높이에 고정. 3D 추정으로 측면 항목과 좌우 움직임을 함께 봅니다. 무릎과 발끝이 잘 보여 무릎 밸거스·무릎-발끝 정렬 판정에 가장 유리합니다. 벤치는 발 쪽 대각선 위에서 촬영.' },
   front: { name: '정면·후면', guide: '정면 또는 정후면. 무릎 밸거스·힙 시프트·바벨 기울기 등 좌우 움직임만 정밀하게 봅니다.' },
 };
 
@@ -31,7 +35,7 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
   }
   const opts = { expectedReps, active: win.activeAt };
   let sag;
-  if (view === 'oblique') {
+  if (is3dView(view)) {
     if (!frames.some((f) => f.world)) return { ok: false, error: '3D 좌표를 얻지 못했습니다. 측면 모드로 분석해 주세요.' };
     sag = analyze(sagittalFrames(frames), lift, 1, { ...T, _oblique: true }, opts);
   } else {
@@ -50,7 +54,7 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
 
   let frontal = null;
   if (view !== 'side') {
-    const bodies = toBodyFrames(frames, view === 'oblique' ? '3d' : 'front', aspect);
+    const bodies = toBodyFrames(frames, is3dView(view) ? '3d' : 'front', aspect);
     frontal = analyzeFrontal(bodies, reps, topTimes, lift, T);
     if (frontal?.hidden.length) summary.push({ level: 'info', text: `가려져서 판정하지 못한 항목: ${frontal.hidden.join(', ')}. 해당 관절이 보이는 각도에서 촬영하면 평가됩니다.` });
     frontal?.reps.forEach((fr, i) => {

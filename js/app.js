@@ -192,7 +192,7 @@ function prefillForm() {
 }
 function updateGuide() {
   const v = $('#formView').value;
-  const benchNote = $('#formLift').value === 'bench' && v === 'oblique' ? ' (벤치: 머리 쪽 위 대각선)' : '';
+  const benchNote = $('#formLift').value === 'bench' && v === 'oblique' ? ' (벤치: 머리 쪽 위 대각선)' : $('#formLift').value === 'bench' && v === 'obliqueFront' ? ' (벤치: 발 쪽 위 대각선)' : '';
   $('#viewGuide').textContent = `📷 ${VIEWS[v].guide}${benchNote}`;
 }
 $('#formLift').addEventListener('change', () => { prefillForm(); updateGuide(); });
