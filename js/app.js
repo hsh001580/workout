@@ -7,13 +7,59 @@ import { estimate1RM } from './bar-analysis.js';
 import { evaluateRun, runStats, RUN_TYPES } from './run-analysis.js';
 import { fetchGarmin, toRunLog } from './garmin.js';
 import { importGarminFile, isSameRun } from './garmin-import.js';
+import { syncOnce, loadSyncConf, saveSyncConf } from './sync.js';
 import { liftE1rm, fatigueSignals, phaseAt, prescribe, LIFT_KO, garminCheckin, readinessOf } from './coach.js';
 
 const state = load();
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const scoreClass = (s) => (s >= 85 ? 's-good' : s >= 65 ? 's-warn' : 's-bad');
-const persist = () => save(state);
+let editGen = 0;
+const persist = () => { save(state); editGen++; scheduleSync(); };
+
+// ---------- 기기 간 동기화 ----------
+let syncTimer = null;
+let syncing = null;
+function scheduleSync(delay = 4000) {
+  if (!loadSyncConf().token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => runSync(false), delay);
+}
+async function runSync(manual) {
+  const conf = loadSyncConf();
+  if (!conf.token || !conf.pass) return;
+  if (syncing) return syncing;
+  const status = document.querySelector('#syncStatus');
+  if (!navigator.onLine) { if (status) status.textContent = '오프라인: 연결되면 자동으로 동기화합니다.'; return; }
+  syncing = (async () => {
+    try {
+      if (status) status.textContent = '동기화 중…';
+      const gen = editGen;
+      const r = await syncOnce(state, conf);
+      if (gen !== editGen) {
+        // 동기화하는 동안 새로 기록함 → 덮어쓰지 않고 곧 다시 동기화
+        saveSyncConf({ ...conf, gistId: r.conf.gistId });
+        scheduleSync(500);
+        return;
+      }
+      saveSyncConf(r.conf);
+      if (r.state) {
+        Object.assign(state, r.state);
+        save(state);
+        rerenderActive();
+        // 설정 탭을 보고 있으면 입력란도 갱신 (옛 값으로 다시 저장해 덮어쓰는 것 방지)
+        if (document.querySelector('.tabs button.active')?.dataset.tab === 'settings') fillSettings();
+      }
+      if (status) status.textContent = `동기화 완료 ${new Date(r.conf.lastSync).toLocaleString('ko-KR')}${r.state ? ' · 다른 기기 기록 반영됨' : ''}`;
+    } catch (err) {
+      if (status) status.textContent = `동기화 실패: ${err.message}`;
+      if (manual) alert(`동기화 실패: ${err.message}`);
+    } finally {
+      syncing = null;
+    }
+  })();
+  return syncing;
+}
 const gdata = () => state.garmin.data || { daily: {}, activities: [], profile: {} };
 const stats = (date = new Date()) => {
   const s = runStats(state.runLogs, date, state.garmin.vo2max);
@@ -1001,8 +1047,29 @@ $('#importData').addEventListener('change', async (e) => {
     alert('백업 파일을 읽을 수 없습니다.');
   }
 });
+$('#syncNow').addEventListener('click', async () => {
+  const token = $('#syncToken').value.trim();
+  const pass = $('#syncPass').value;
+  if (!token || !pass) { alert('GitHub 토큰과 동기화 비밀번호를 모두 입력하세요.'); return; }
+  const conf = loadSyncConf();
+  // 토큰이나 비밀번호가 바뀌면 처음 연결처럼 다룸 (이미 동기화된 데이터 우선)
+  const fresh = conf.token !== token || conf.pass !== pass ? { token, pass } : conf;
+  saveSyncConf(fresh);
+  await runSync(true);
+});
+$('#syncOff').addEventListener('click', () => {
+  if (!confirm('이 기기의 동기화 연결을 해제할까요? (기록은 그대로 남습니다)')) return;
+  saveSyncConf({});
+  $('#syncToken').value = '';
+  $('#syncPass').value = '';
+  $('#syncStatus').textContent = '연결 해제됨';
+});
+addEventListener('online', () => runSync(false));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') runSync(false); });
+
 $('#resetData').addEventListener('click', () => {
-  if (!confirm('모든 기록과 설정을 삭제할까요? 되돌릴 수 없습니다.')) return;
+  if (!confirm('모든 기록과 설정을 삭제할까요? 되돌릴 수 없습니다.\n(이 기기만 초기화되고 동기화 연결은 해제됩니다. 다른 기기의 기록은 지워지지 않음)')) return;
+  saveSyncConf({});
   Object.assign(state, defaultState());
   persist();
   showTab('settings');
@@ -1026,4 +1093,13 @@ if (firstVisit) {
   $('#settingsMsg').textContent = '처음이시네요! 1RM과 심박 정보를 입력하고 저장한 뒤, 가민 연동을 설정하세요.';
 } else {
   syncGarmin();
+}
+{
+  const c = loadSyncConf();
+  if (c.token) {
+    $('#syncToken').value = c.token;
+    $('#syncPass').value = c.pass || '';
+    $('#syncStatus').textContent = c.lastSync ? `마지막 동기화 ${new Date(c.lastSync).toLocaleString('ko-KR')}` : '';
+    runSync(false);
+  }
 }

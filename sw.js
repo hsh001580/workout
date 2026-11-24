@@ -1,13 +1,13 @@
 // 오프라인 실행용 서비스 워커
 // - 앱 파일(같은 출처): 네트워크 우선 → 배포 즉시 새 버전, 오프라인이면 캐시
 // - MediaPipe 라이브러리·모델(버전 고정 CDN): 캐시 우선 → 두 번째부터 빠르게, 오프라인에서도 자세 평가
-const APP = 'app-v1';
+const APP = 'app-v2';
 const CDN = 'cdn-v1';
 const CORE = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/back-curve.js', 'js/bar-analysis.js', 'js/bar-track.js', 'js/coach.js', 'js/form-3d.js',
   'js/form-analysis.js', 'js/form-eval.js', 'js/garmin-import.js', 'js/garmin.js', 'js/pose.js', 'js/program.js',
-  'js/run-analysis.js', 'js/set-window.js', 'js/storage.js', 'js/thresholds.js',
+  'js/run-analysis.js', 'js/set-window.js', 'js/storage.js', 'js/sync.js', 'js/thresholds.js',
 ];
 const CDN_HOSTS = ['cdn.jsdelivr.net', 'storage.googleapis.com'];
 

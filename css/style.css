@@ -195,7 +195,7 @@ details.rep:not([open]) h4 { margin: 0; }
 details.why { font-size: 0.82rem; margin-top: 4px; }
 details.why summary { cursor: pointer; color: var(--primary); }
 details.why ul { margin: 4px 0; padding-left: 18px; color: var(--muted); }
-ul.small { font-size: 0.85rem; padding-left: 18px; }
+ul.small, ol.small { font-size: 0.85rem; padding-left: 18px; }
 .tl-controls { align-items: flex-end; margin-top: 8px; }
 .tl-controls label { width: 110px; }
 .chart.timeline text { font-size: 22px; }
