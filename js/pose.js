@@ -7,6 +7,9 @@ const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}`;
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
 
 let landmarkerPromise = null;
+// MediaPipe VIDEO 모드는 같은 인스턴스에서 타임스탬프가 항상 증가해야 한다.
+// 평가할 때마다 0부터 다시 세면 두 번째 평가부터 'timestamp mismatch'로 실패하므로 평가 간에 이어서 증가시킨다.
+let lastTs = 0;
 
 async function getLandmarker() {
   if (!landmarkerPromise) {
@@ -32,8 +35,12 @@ async function getLandmarker() {
 
 export function seek(video, t) {
   return new Promise((resolve) => {
-    const done = () => { video.removeEventListener('seeked', done); resolve(); };
+    // 이미 그 위치면 'seeked' 이벤트가 오지 않는 브라우저가 있어 바로 끝냄
+    if (Math.abs(video.currentTime - t) < 1e-3 && video.readyState >= 2) { resolve(); return; }
+    let timer = null;
+    const done = () => { clearTimeout(timer); video.removeEventListener('seeked', done); resolve(); };
     video.addEventListener('seeked', done);
+    timer = setTimeout(done, 3000); // 이벤트가 끝내 안 오면 멈추지 않도록
     video.currentTime = t;
   });
 }
@@ -81,10 +88,11 @@ export async function extractFrames(video, onProgress, { fps = 15, plate = null 
     return toGray(ctx.getImageData(0, 0, cw, ch).data, cw, ch);
   };
 
-  let ts = 0;
+  let ts = lastTs;
   for (let t = 0; t <= duration; t += step) {
     await seek(video, t);
     ts += step * 1000; // 단조 증가 타임스탬프
+    lastTs = ts; // 중간에 실패해도 다음 평가가 이어서 증가하도록 매 프레임 기록
     const res = lm.detectForVideo(video, ts);
     const pose = res.landmarks?.[0];
     const world = res.worldLandmarks?.[0];
@@ -109,6 +117,7 @@ export async function extractFrames(video, onProgress, { fps = 15, plate = null 
     }
     onProgress?.(t / duration, `프레임 분석 중… ${Math.round((t / duration) * 100)}%`);
   }
+  lastTs = ts;
   onProgress?.(1, '분석 완료');
   return { frames, bar };
 }
