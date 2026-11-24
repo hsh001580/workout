@@ -67,7 +67,8 @@ test('얕은 스쿼트: 깊이 부족 지적', () => {
   assert.ok(res.ok);
   assert.ok(res.reps.every((r) => r.issues.some((i) => i.level === 'bad' && i.text.includes('깊이 미달'))));
   assert.ok(res.finalize() < 85);
-  assert.ok(res.summary.some((i) => i.text.includes('반복적으로')));
+  assert.ok(res.summary.some((i) => /규정 판정: 3회 중 0회 성공/.test(i.text)));
+  assert.ok(!res.summary.some((i) => /재브레이싱/.test(i.text))); // 회차 사이 서 있는 시간이 있으면 재브레이싱 경고 없음
 });
 
 test('데드리프트: 반복 인식 및 락아웃 확인', () => {

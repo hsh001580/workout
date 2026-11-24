@@ -266,7 +266,8 @@ function analyzeSquatRep(pts, prevTop, bottom, nextTop, n, T) {
   const lo = prevTop ?? Math.max(0, bottom - 30);
   const hi = nextTop ?? Math.min(pts.length - 1, bottom + 30);
   const seg = pts.slice(lo, hi + 1);
-  if (feetShift(seg, pts[lo].p, leg) > 0.08) issues.push(issue('bad', '발 위치 이동 (실격): 반복 중 발을 고정', 'rule'));
+  // 대각선은 먼 쪽 발 추정이 부정확해 발 이동 판정을 하지 않음
+  if (!T._oblique && feetShift(seg, pts[lo].p, leg) > 0.08) issues.push(issue('bad', '발 위치 이동 (실격): 반복 중 발을 고정', 'rule'));
 
   // 효율: 상체각(스타일별), 엉덩이 먼저 뜸, 바-미드풋
   if (lean > tb) issues.push(issue('warn', `상체가 ${styleKo} 기준보다 크게 숙여짐 (${lean.toFixed(0)}°): 바가 앞으로 쏠리기 쉬움, 등 상부로 바를 받치기`));
@@ -481,7 +482,7 @@ function analyzeDeadliftRep(pts, start, top, n, T) {
 
   // 규정: 히칭·당기는 중 하강, 발 이동, 락아웃
   if (downwardIn(n, start, top, T.downwardTol) > 0) issues.push(issue('bad', '당기는 중 하강·히칭 (실격): 허벅지에 바를 얹거나 다시 내렸다 올리지 않고 한 번에 락아웃', 'rule'));
-  if (feetShift(seg, s, leg) > 0.08) issues.push(issue('warn', '당기는 중 발 위치 이동: 발 고정', 'rule'));
+  if (!T._oblique && feetShift(seg, s, leg) > 0.08) issues.push(issue('warn', '당기는 중 발 위치 이동: 발 고정', 'rule'));
   const hipTop = angle(t.shoulder, t.hip, t.knee);
   const kneeTop = angle(t.hip, t.knee, t.ankle);
   metrics.hipTop = +hipTop.toFixed(0);
@@ -547,7 +548,10 @@ function bracing(pts, n, rep, refTrunk, lift, T, sagittal = true) {
   const metrics = {};
   // 1) 반복 직전 정지 시간: 숨 채우고 복압 잡을 시간
   if (rep.braceI != null && lift !== 'bench') {
-    const d = dwell(pts, n, rep.braceI);
+    // 하강 직전에 서 있던(상단 구간) 시간
+    let a = rep.braceI;
+    while (a > 0 && n[a - 1] <= 0.25) a--;
+    const d = pts[rep.braceI].t - pts[a].t;
     metrics.braceSec = +d.toFixed(1);
     if (d < T.rebraceSec) out.push(issue(lift === 'squat' ? 'warn' : 'info', `반복 직전 정지 ${d.toFixed(1)}초: 숨을 다시 채우고 복압을 잡을 시간 없이 연속 수행. 무거운 세트는 반복마다 재브레이싱`));
   }
@@ -590,7 +594,16 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
   }
   const { events, n, range, ok, act, signal, h } = findEvents(pts, lift, opts);
   const fn = { squat: analyzeSquatRep, bench: analyzeBenchRep, ohp: analyzeOhpRep }[lift];
-  const reps = repSpans(events, lift, ok || (() => true)).map((sp) => (lift === 'deadlift'
+  const spans = repSpans(events, lift, ok || (() => true)).map((sp) => {
+    // 하강 시작점 = 하단 직전 마지막으로 서 있던 프레임 (이전 상단이 걷기·셋업 구간까지 거슬러 가지 않게)
+    if (sp.prevTop != null) {
+      let i = sp.bottom;
+      while (i > sp.prevTop && n[i - 1] > 0.2) i--;
+      sp.prevTop = Math.max(sp.prevTop, i - 1);
+    }
+    return sp;
+  });
+  const reps = spans.map((sp) => (lift === 'deadlift'
     ? analyzeDeadliftRep(pts, sp.start, sp.top, n, T)
     : fn(pts, sp.prevTop, sp.bottom, sp.nextTop, n, T)));
   if (!reps.length) {
@@ -643,7 +656,7 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
       deadlift: [['kneeStart', T.consistencyPct * 0.8, '시작 자세가 회차마다 다름 (무릎각 °)'], ['backShift', T.consistencyPct * 0.8, '바닥에서 뗄 때 등 각도 변화가 회차마다 다름 (°)']],
       ohp: [['layback', T.consistencyPct * 0.6, '상체 젖힘이 회차마다 다름 (°)']],
     }[lift] || [];
-    for (const [k, l, label] of checks) {
+    for (const [k, l, label] of checks.filter(([k]) => !(T._oblique && ['torso', 'backShift', 'layback'].includes(k)))) {
       const v = sd(k);
       if (v != null && v > l) summary.push(issue('warn', `${label}: 편차 ${k === 'depth' ? (v * 100).toFixed(0) + '%' : v.toFixed(1)}. 매 회차 같은 셋업·템포로`, 'cons'));
     }

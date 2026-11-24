@@ -57,7 +57,14 @@ export function toBodyFrames(frames, mode, aspect = 1) {
     const leg = raw.slice(0, 10).reduce((a, f) => a + (f.L.hip.up - f.L.ankle.up + f.R.hip.up - f.R.ankle.up) / 2, 0) / Math.min(10, raw.length);
     cmPerUnit = leg > 0 ? 85 / leg : 100;
   }
-  return raw.map((f) => ({ ...f, hasAP: mode === '3d', cmPerUnit }));
+  // 대각선(3D): 카메라에 가까운 쪽. MediaPipe는 가려진 먼 쪽 관절에도 신뢰도를 높게 주는 경우가 많아
+  // 신뢰도만으로 거를 수 없으므로 먼 쪽 다리·팔은 아예 쓰지 않는다 (lm z: 작을수록 카메라에 가까움)
+  let near = null;
+  if (mode === '3d') {
+    const dz = frames.filter((f) => f.lm).map((f) => f.lm[L.hip].z - f.lm[R.hip].z).sort((a, b) => a - b);
+    near = dz.length ? (dz[Math.floor(dz.length / 2)] < 0 ? 'L' : 'R') : null;
+  }
+  return raw.map((f) => ({ ...f, hasAP: mode === '3d', cmPerUnit, near }));
 }
 
 // 3D 모드용: 측면 분석기를 재사용하기 위해 시상면(AP-UP)에 투영한 가짜 측면 영상 좌표 생성
@@ -95,7 +102,10 @@ const VIS = 0.5;
 function rawMetrics(f) {
   const k = f.cmPerUnit;
   const out = {};
-  const ok = (s, ...names) => names.every((n) => (f['v' + s]?.[n] ?? 1) >= VIS);
+  const ok = (s, ...names) => {
+    if (f.near && s !== f.near && names.some((n) => n !== 'shoulder' && n !== 'hip')) return false; // 먼 쪽 팔다리 제외
+    return names.every((n) => (f['v' + s]?.[n] ?? 1) >= VIS);
+  };
   for (const [s, sign] of [['L', -1], ['R', 1]]) {
     const P = f[s];
     const leg = ok(s, 'hip', 'knee', 'ankle');
@@ -179,6 +189,9 @@ export function analyzeFrontal(bodies, reps, topTimes, lift, T) {
   const ref = avgMetrics(refList);
   const hasAP = bodies[0].hasAP;
   const hidden = new Set();
+  // 대각선(3D)에서는 먼 쪽이 가려져 좌우 비교가 불가능: 가까운 쪽 다리 지표만 판정
+  const bilateral = !hasAP;
+  if (!bilateral) hidden.add('좌우 비교 지표(힙 시프트·골반 기울기·좌우 차이·몸통 회전·바 기울기·뒤꿈치): 대각선에서는 먼 쪽이 가려져 판정하지 않음, 정면·정후면 촬영 필요');
 
   // 특정 시각의 기준 대비 변화 (스티킹 포인트 원인 진단용)
   const deltaAt = (t) => {
@@ -221,22 +234,23 @@ export function analyzeFrontal(bodies, reps, topTimes, lift, T) {
         if (v > thr(T.valgusBad, nk)) issues.push(issue('bad', `${which} 무릎이 안쪽으로 ${v.toFixed(0)}° 모임: 발 삼각지지로 지면을 벌리듯 누르고 무릎을 발끝 방향으로`));
         else if (v > thr(T.valgusWarn, nk)) issues.push(issue('warn', `${which} 무릎이 안쪽으로 ${v.toFixed(0)}° 모임: 둔근 활성화, 무릎-발끝 정렬 유지`));
         else issues.push(issue('good', `무릎 좌우 정렬 양호 (최대 ${Math.max(0, v).toFixed(0)}°)`));
-        if (vL != null && vR != null && Math.abs(vL - vR) > thr(T.valgusWarn, 'shinL', 'shinR')) issues.push(issue('warn', `좌우 무릎 움직임 차이 ${Math.abs(vL - vR).toFixed(0)}°: ${which} 다리 약화 또는 가동성 차이 의심`));
+        if (bilateral && vL != null && vR != null && Math.abs(vL - vR) > thr(T.valgusWarn, 'shinL', 'shinR')) issues.push(issue('warn', `좌우 무릎 움직임 차이 ${Math.abs(vL - vR).toFixed(0)}°: ${which} 다리 약화 또는 가동성 차이 의심`));
       }
       if (hasAP) {
         const kts = win.flatMap((m) => [m.kneeToeL, m.kneeToeR]).filter(Number.isFinite);
         if (kts.length) {
           const kt = Math.max(...kts);
           metrics.kneeToe = Math.round(kt);
-          if (kt > thr(T.kneeToeWarn, 'kneeToeL', 'kneeToeR')) issues.push(issue('warn', `무릎이 발끝 방향보다 ${kt.toFixed(0)}° 안쪽을 향함: 무릎을 두 번째 발가락 방향으로`));
+          // 앞뒤 깊이에 의존하는 3D 추정이라 실영상에서 회차마다 4~23°로 흔들림 → 참고 정보
+          if (kt > thr(T.kneeToeWarn, 'kneeToeL', 'kneeToeR')) issues.push(issue('info', `무릎이 발끝 방향보다 ${kt.toFixed(0)}° 안쪽을 향함 (3D 추정, 참고용): 무릎을 두 번째 발가락 방향으로`));
         }
       }
-      const heel = Math.max(maxDelta('heelL') ?? -99, maxDelta('heelR') ?? -99);
+      const heel = bilateral ? Math.max(maxDelta('heelL') ?? -99, maxDelta('heelR') ?? -99) : -99;
       if (heel > -99) {
         metrics.heelCm = +Math.max(0, heel).toFixed(1);
         if (heel > thr(T.heelLiftCm, 'heelL', 'heelR')) issues.push(issue('warn', `뒤꿈치 ${heel.toFixed(1)}cm 들림: 무게중심이 앞꿈치로 쏠림. 발목 가동성 확인, 뒤꿈치로 지면 누르기`));
       }
-      if (lift === 'squat') {
+      if (lift === 'squat' && bilateral) {
         const asyms = win.filter((m) => Number.isFinite(m.flexL) && Number.isFinite(m.flexR)).map((m) => Math.abs(m.flexL - m.flexR));
         if (asyms.length) {
           const asym = Math.max(...asyms);
@@ -246,7 +260,9 @@ export function analyzeFrontal(bodies, reps, topTimes, lift, T) {
       }
     }
 
-    if (lift === 'ohp' && hasAP) {
+    if (!bilateral) {
+      // 대각선: 힙 시프트·골반 기울기 판정 안 함 (위에서 안내)
+    } else if (lift === 'ohp' && hasAP) {
       hidden.add('힙 시프트 (팔을 머리 위로 올리면 3D 골반 추정이 함께 흔들려 대각선 OHP에서는 제외, 정면·후면 영상으로 확인)');
     } else if (lift !== 'bench') {
       const shifts = Number.isFinite(ref.hipShift) ? win.map((m) => m.hipShift).filter(Number.isFinite).map((x) => x - ref.hipShift) : [];
@@ -263,14 +279,14 @@ export function analyzeFrontal(bodies, reps, topTimes, lift, T) {
         if (tilt > thr(T.pelvisTiltCm, 'pelvisTilt')) issues.push(issue('warn', `골반 좌우 높이 ${tilt.toFixed(1)}cm 기울어짐`));
       }
     }
-    if (hasAP) {
+    if (hasAP && bilateral) {
       const rot = maxDelta('trunkRot', Math.abs);
       if (rot != null) {
         metrics.trunkRot = Math.round(rot);
         if (rot > thr(T.trunkRotWarn, 'trunkRot')) issues.push(issue('warn', `몸통이 ${rot.toFixed(0)}° 회전: 복압과 광배근 긴장으로 몸통 고정`));
       }
     }
-    if (lift !== 'squat') {
+    if (lift !== 'squat' && bilateral) {
       const both = win.filter((m) => Number.isFinite(m.wristL) && Number.isFinite(m.wristR));
       if (both.length < win.length / 2 || !Number.isFinite(ref.wristL) || !Number.isFinite(ref.wristR)) hidden.add('바벨 기울기');
       else {
@@ -299,9 +315,9 @@ export function analyzeFrontal(bodies, reps, topTimes, lift, T) {
         metrics.lockout3d = Math.round(e);
         if (e < T.lockoutAngle - 25) issues.push(issue('info', `락아웃 팔꿈치 추정 ${e.toFixed(0)}°: 덜 펴졌을 수 있음 (대각선 3D는 과소추정 경향, 정측면 영상으로 확인 권장)`));
       }
-      if (ext.length === 2 && Math.abs(ext[0] - ext[1]) > thr(15, 'elbowExtL', 'elbowExtR')) issues.push(issue('warn', `락아웃 시 좌우 팔꿈치 각 차이 ${Math.abs(ext[0] - ext[1]).toFixed(0)}°: 한쪽 팔이 늦게 펴짐`));
+      if (bilateral && ext.length === 2 && Math.abs(ext[0] - ext[1]) > thr(15, 'elbowExtL', 'elbowExtR')) issues.push(issue('warn', `락아웃 시 좌우 팔꿈치 각 차이 ${Math.abs(ext[0] - ext[1]).toFixed(0)}°: 한쪽 팔이 늦게 펴짐`));
     }
-    if (lift === 'ohp') {
+    if (lift === 'ohp' && bilateral) {
       const lean = maxDelta('lateralLean', Math.abs);
       if (lean != null) {
         metrics.lateralLean = Math.round(lean);

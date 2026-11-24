@@ -105,15 +105,20 @@ test('후방 45° 3D: 정상 스쿼트는 밸거스 없음, 깊이·반복 인�
   assert.ok(res.reps.every((r) => r.issues.some((i) => (i.text.includes('깊이 충분') || i.text.includes('규정 깊이')))), JSON.stringify(res.reps[0].issues));
 });
 
-test('후방 45° 3D: 오른 무릎 밸거스와 힙 시프트 감지', () => {
-  const res = evaluateForm({ frames: squatSet({ valgusR: 0.14, shift: 0.06 }), lift: 'squat', view: 'oblique', T: getThresholds({}) });
+test('후방 45° 3D: 가까운 쪽 무릎 밸거스는 판정, 좌우 비교(힙 시프트)는 정면에서만', () => {
+  const frames = squatSet({ valgusR: 0.14, shift: 0.06 }); // 합성 데이터는 오른쪽이 카메라 쪽
+  const res = evaluateForm({ frames, lift: 'squat', view: 'oblique', T: getThresholds({}) });
   assert.ok(res.ok, res.error);
   assert.ok(res.stats.valgus > 12, `valgus ${res.stats.valgus}`);
   const texts = res.reps.flatMap((r) => r.issues.map((i) => i.text)).join('\n');
   assert.match(texts, /오른쪽 무릎이 안쪽으로/);
-  assert.match(texts, /골반이 오른쪽으로 [\d.]+cm 이동/);
-  assert.ok(Math.abs(res.stats.hipShiftCm - 6) < 1, `shift ${res.stats.hipShiftCm}`);
-  assert.ok(res.score < 90);
+  assert.doesNotMatch(texts, /골반이 (왼|오른)쪽으로/);
+  assert.ok(res.summary.some((i) => /좌우 비교 지표.*정면·정후면 촬영/.test(i.text)));
+  const front = evaluateForm({ frames, lift: 'squat', view: 'front', T: getThresholds({}) });
+  assert.ok(front.ok, front.error);
+  // 정면에서는 좌우 비교 지표를 측정 (합성 화면 좌표가 가로로 축소돼 있어 값 크기만 확인)
+  assert.ok(front.reps.every((r) => r.metrics.hipShiftCm > 2), JSON.stringify(front.reps.map((r) => r.metrics.hipShiftCm)));
+  assert.ok(!front.summary.some((i) => /좌우 비교 지표/.test(i.text)));
 });
 
 test('가려진 쪽 관절은 판정에서 제외 (실제 영상 회귀)', () => {
@@ -149,13 +154,34 @@ test('전방·후방·측면 어느 방향에서 찍어도 같은 판정 (3D 몸
   const results = [0, 45, 135, 180, -135, -45].map((yaw) => {
     const res = evaluateForm({ frames: rotateYaw(base, yaw), lift: 'squat', view: yaw === 135 || yaw === -135 || yaw === 180 ? 'obliqueFront' : 'oblique' });
     assert.ok(res.ok, `${yaw}: ${res.error}`);
-    return { yaw, reps: res.reps.length, valgus: res.stats.valgus, shift: res.stats.hipShiftCm, depth: res.reps[0].metrics.depth };
+    return { yaw, reps: res.reps.length, valgus: res.stats.valgus, depth: res.reps[0].metrics.depth };
   });
   for (const r of results) {
     assert.equal(r.reps, 3, JSON.stringify(r));
     assert.ok(Math.abs(r.valgus - results[0].valgus) <= 1, JSON.stringify(results));
-    assert.ok(Math.abs(r.shift - results[0].shift) <= 0.3, JSON.stringify(results));
     assert.ok(Math.abs(r.depth - results[0].depth) <= 0.02, JSON.stringify(results));
   }
-  assert.ok(results[0].valgus > 12 && results[0].shift > 5);
+  assert.ok(results[0].valgus > 12);
+});
+
+test('실영상 회귀: 가려진 먼 쪽 다리가 신뢰도 높게 엉뚱한 위치로 와도 판정에 안 씀', () => {
+  // 오른쪽이 카메라 쪽(lm z 작음). 왼쪽(먼 쪽) 무릎을 안쪽으로 크게 틀어 넣되 신뢰도는 0.9
+  const frames = squatSet({}).map((f, k) => ({
+    ...f,
+    lm: f.lm.map((p, i) => (i === 24 ? { ...p, z: -0.2 } : i === 23 ? { ...p, z: 0.2 } : p)),
+    world: f.world.map((p, i) => (i === 25 ? { ...p, x: p.x + 0.12 * Math.sin(k / 5) } : p)),
+  }));
+  const res = evaluateForm({ frames, lift: 'squat', view: 'oblique' });
+  assert.ok(res.ok, res.error);
+  assert.ok(res.reps.every((r) => r.metrics.valgusL == null && Number.isFinite(r.metrics.valgusR)), JSON.stringify(res.reps.map((r) => r.metrics)));
+  assert.doesNotMatch(res.reps.flatMap((r) => r.issues.map((i) => i.text)).join('\n'), /왼쪽 무릎|좌우 무릎|골반이/);
+});
+
+test('실영상 회귀: 하강 시작점은 서 있던 구간 끝 (앞의 긴 대기·셋업 미포함)', () => {
+  const stand = Array.from({ length: 150 }, (_, i) => ({ t: i / 15, ...person(0) })); // 10초 서 있음
+  const reps = squatSet({}).map((f) => ({ ...f, t: f.t + 10 }));
+  const res = evaluateForm({ frames: [...stand, ...reps], lift: 'squat', view: 'oblique' });
+  assert.ok(res.ok, res.error);
+  const r1 = res.reps[0];
+  assert.ok(r1.conc[0] - r1.ecc[0] < 2, `하강 ${r1.ecc[0]}~${r1.conc[0]}`);
 });

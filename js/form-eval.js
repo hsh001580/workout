@@ -54,6 +54,20 @@ export function detectStyle(frames, lift, view, bar, aspect = 1) {
 
 const STYLE_KO = { highbar: '하이바', lowbar: '로우바', conventional: '컨벤셔널', sumo: '스모' };
 
+// 대각선: 카메라에 가까운 쪽 다리의 화면 좌표로 깊이 (카메라가 엉덩이 높이에 수평이면 높이 차이는 원근 영향이 작음)
+// 3D 추정 깊이는 앞뒤 방향 오차가 커서 실제보다 얕게 나오는 경우가 확인됨
+function nearSideDepth(frames, t, aspect) {
+  const f = frames.reduce((a, x) => (x.lm && Math.abs(x.t - t) < Math.abs(a.t - t) ? x : a), frames[0]);
+  if (!f?.lm) return null;
+  const dz = f.lm[23].z - f.lm[24].z;
+  const [hip, knee] = dz < 0 ? [23, 25] : [24, 26];
+  const P = (i) => ({ x: f.lm[i].x * aspect, y: f.lm[i].y });
+  const thigh = Math.hypot(P(hip).x - P(knee).x, P(hip).y - P(knee).y);
+  return thigh > 0 ? (P(hip).y - P(knee).y) / thigh : null;
+}
+// 대각선에서 앞뒤 기울기 기반 판정은 원근으로 각도가 작게 보여 참고 정보로
+const OBLIQUE_SAGITTAL = /상체가 .*숙여짐|상체각 |엉덩이가 먼저 뜸|미드풋에서 벗어남|0\.2초 사이|등 각도가 무너짐|다리에서 멀어짐|앞뒤로 흔들림/;
+
 // 정면·3D·바벨 판정의 범주
 function catOf(text) {
   if (/무릎이 안쪽|무릎이 발끝|팔꿈치 벌어짐/.test(text)) return 'risk';
@@ -86,12 +100,13 @@ const DRIFT = {
   bench: [['shoulderLift', 6, '어깨 들림', '%'], ['buttLift', 4, '엉덩이 들림', '%'], ['touch', 0.08, '터치 위치 변화', ''], ['descentSec', -0.4, '하강 시간', '초']],
   ohp: [['layback', 5, '상체 젖힘', '°'], ['kneeDip', 5, '무릎 반동', '°'], ['lumbarFlex', -2, '허리 젖힘', '%']],
 };
-export function fatigueDrift(reps, lift) {
+const OBLIQUE_UNRELIABLE = ['leanUp', 'torso', 'backShift', 'kneeGap', 'midfootCm', 'layback'];
+export function fatigueDrift(reps, lift, oblique = false) {
   if (reps.length < 3) return [];
   const first = reps[0].metrics;
   const tail = reps.slice(-2).map((r) => r.metrics);
   const out = [];
-  for (const [k, lim, label, unit] of DRIFT[lift] || []) {
+  for (const [k, lim, label, unit] of (DRIFT[lift] || []).filter(([k]) => !(oblique && OBLIQUE_UNRELIABLE.includes(k)))) {
     if (!Number.isFinite(first[k])) continue;
     const vals = tail.map((m) => m[k]).filter(Number.isFinite);
     if (!vals.length) continue;
@@ -133,6 +148,25 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
   }
   if (!sag.ok) return { ...sag, window: win, timeline: sag.timeline };
   const { reps, summary } = sag;
+  if (is3dView(view)) {
+    for (const r of reps) {
+      r.issues = r.issues.map((i) => (OBLIQUE_SAGITTAL.test(i.text) && (i.level === 'warn' || i.level === 'bad')
+        ? { ...i, level: 'info', text: `${i.text} (대각선 추정, 측면 촬영에서 정확)` } : i));
+      if (lift === 'squat' && r.ecc !== undefined) {
+        const bt = sag.pts[r.keyFrame]?.t;
+        const d2 = bt != null ? nearSideDepth(frames, bt, aspect) : null;
+        if (d2 != null) {
+          r.metrics.depth = +d2.toFixed(2);
+          const depthIdx = r.issues.findIndex((i) => /깊이/.test(i.text) && i.cat === 'rule');
+          const note = ' (가까운 쪽 다리 화면 기준)';
+          const ni = d2 >= Math.max(0, T.squatDepthWarn) ? { level: 'good', text: `규정 깊이 통과 (고관절이 무릎보다 아래)${note}`, cat: 'rule' }
+            : d2 > T.squatDepthWarn - 0.08 ? { level: 'warn', text: `깊이 경계: 심판 시야에 따라 실패 가능, 1~3cm 더 앉기${note}`, cat: 'rule' }
+              : { level: 'bad', text: `깊이 미달 (실격): 고관절을 무릎 높이 아래까지${note}`, cat: 'rule' };
+          if (depthIdx >= 0) r.issues[depthIdx] = ni; else r.issues.unshift(ni);
+        }
+      }
+    }
+  }
   if (win.trimmed) {
     const f = (x) => x.toFixed(1);
     summary.unshift({ level: 'info', text: `언랙·랙 등 준비 구간 자동 제외: ${win.excluded.map(([a, b]) => `${f(a)}~${f(b)}초`).join(', ')}. 틀렸다면 아래 타임라인에서 구간을 직접 지정하세요.` });
@@ -170,7 +204,7 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
   }
 
   // 세트 후반 무너짐 (바벨·정면 지표까지 합친 뒤)
-  const drift = fatigueDrift(reps, lift);
+  const drift = fatigueDrift(reps, lift, is3dView(view));
   summary.push(...drift);
   if (purpose !== 'meet') {
     reps.forEach((r) => { r.issues = r.issues.map(forLongevity).filter(Boolean); });
