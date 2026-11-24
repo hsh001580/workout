@@ -187,3 +187,42 @@ test('가민 암호화 파일 복호화 (파이썬 스크립트 출력)', { skip
   assert.equal(data.runs[0].distanceKm, 8.012);
   await assert.rejects(decrypt(payload, 'wrong'), /비밀번호/);
 });
+
+// ---------- 실제 촬영 환경 견고성 ----------
+function transform(frames, fn) {
+  return frames.map((f, i) => ({ ...f, lm: f.lm.map((p) => (p.visibility > 0.5 ? { ...p, ...fn(p, i, f.t) } : p)) }));
+}
+
+test('순간 오인식 프레임(튀는 좌표)이 있어도 반복 인식', () => {
+  const frames = squatFrames(110, 3);
+  [10, 55, 90].forEach((i) => { frames[i] = { ...frames[i], lm: frames[i].lm.map((p) => (p.visibility > 0.5 ? { ...p, y: p.y - 0.5 } : p)) }; });
+  const res = analyze(frames, 'squat');
+  assert.ok(res.ok, res.error);
+  assert.equal(res.reps.length, 3);
+});
+
+test('손떨림·줌으로 화면 위치와 크기가 변해도 반복 인식', () => {
+  const frames = transform(squatFrames(110, 3), (p, i, t) => {
+    const z = 1 + 0.5 * (t / 8); // 8초 동안 1.5배 줌
+    return { x: 0.5 + (p.x - 0.5) * z + 0.03 * Math.sin(t * 3), y: 0.3 + (p.y - 0.3) * z + 0.15 * Math.sin(t * 0.7) };
+  });
+  const res = analyze(frames, 'squat');
+  assert.ok(res.ok, res.error);
+  assert.equal(res.reps.length, 3);
+});
+
+test('걸어 나오기 + 반복 사이 휴식 구간이 있어도 반복 인식', () => {
+  const stand = (n, t0, dx = 0) => Array.from({ length: n }, (_, i) => ({ t: t0 + i / 15, lm: figure({ phi: 5, shin: 0, lean: 10, armDown: false }).map((p) => (p.visibility > 0.5 ? { ...p, x: p.x + dx * (i / n) } : p)) }));
+  const reps = squatFrames(110, 3).map((f) => ({ ...f, t: f.t + 3 }));
+  const frames = [...stand(45, 0, 0.2), ...reps, ...stand(30, reps[reps.length - 1].t + 0.1)];
+  const res = analyze(frames, 'squat');
+  assert.ok(res.ok, res.error);
+  assert.equal(res.reps.length, 3);
+});
+
+test('움직임이 없으면 이유를 알려줌', () => {
+  const frames = Array.from({ length: 60 }, (_, i) => ({ t: i / 15, lm: figure({ phi: 5, shin: 0, lean: 10, armDown: false }) }));
+  const res = analyze(frames, 'squat');
+  assert.equal(res.ok, false);
+  assert.match(res.error, /움직임이 거의 잡히지 않았습니다/);
+});

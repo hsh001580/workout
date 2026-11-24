@@ -81,22 +81,45 @@ function smooth(pts, w = 1) {
   });
 }
 
-// 바닥(하단) 지점일수록 큰 값이 되는 신호
-function signalOf(lift, p) {
-  if (lift === 'squat') return p.hip.y;
-  if (lift === 'bench' || lift === 'ohp') return p.wrist.y;
-  return p.shoulder.y; // deadlift: 바닥에서 시작
+// 바닥(하단) 지점일수록 큰 값이 되는 신호.
+// 화면 속 절대 위치가 아니라 몸 기준 상대 높이를 팔·다리 길이로 나눠 쓰므로
+// 손으로 든 카메라, 줌, 걸어 나오기 등 카메라·거리 변화에 영향을 덜 받는다.
+function segLen(pts, a, b, c) {
+  const v = pts.map((f) => dist(f.p[a], f.p[b]) + (c ? dist(f.p[b], f.p[c]) : 0)).sort((x, y) => x - y);
+  return v[Math.floor(v.length / 2)] || 1;
+}
+function signalSeries(pts, lift) {
+  if (lift === 'squat') {
+    const L = segLen(pts, 'hip', 'knee', 'ankle');
+    return pts.map((f) => -(f.p.ankle.y - f.p.hip.y) / L); // 발목 위 고관절 높이
+  }
+  if (lift === 'bench' || lift === 'ohp') {
+    const L = segLen(pts, 'shoulder', 'elbow', 'wrist');
+    return pts.map((f) => -(f.p.shoulder.y - f.p.wrist.y) / L); // 어깨 위 손목 높이
+  }
+  const L = segLen(pts, 'shoulder', 'hip', 'knee') + segLen(pts, 'knee', 'ankle');
+  return pts.map((f) => -(f.p.ankle.y - f.p.shoulder.y) / L); // deadlift: 발목 위 어깨 높이
+}
+
+function medianFilter(a, w = 2) {
+  return a.map((_, i) => {
+    const win = a.slice(Math.max(0, i - w), i + w + 1).sort((x, y) => x - y);
+    return win[Math.floor(win.length / 2)];
+  });
 }
 
 // 하단(bottom)/상단(top) 극값 이벤트 탐지
+// 순간 오인식 한 프레임이 범위를 망치지 않도록 중앙값 필터 + 5~95 백분위로 정규화
 export function findEvents(pts, lift) {
-  const s = pts.map((f) => signalOf(lift, f.p));
-  if (s.length < 5) return { events: [], range: 0 };
-  const min = Math.min(...s);
-  const max = Math.max(...s);
-  const range = max - min;
-  if (range < 0.03) return { events: [], range };
-  const n = s.map((v) => (v - min) / range);
+  if (pts.length < 5) return { events: [], range: 0 };
+  const s = medianFilter(signalSeries(pts, lift), 2);
+  const sorted = [...s].sort((a, b) => a - b);
+  const q = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))];
+  const lo = q(0.05);
+  const hi = q(0.95);
+  const range = hi - lo;
+  if (range < 0.12) return { events: [], range }; // 팔·다리 길이의 12% 미만 움직임은 반복으로 보지 않음
+  const n = s.map((v) => Math.min(1.2, Math.max(-0.2, (v - lo) / range)));
   const events = [];
   let zone = null;
   let best = -1;
@@ -363,7 +386,7 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
   if (pts.length < 10) {
     return { ok: false, error: '관절 인식이 충분하지 않습니다. 몸 전체가 보이도록 촬영해 주세요.' };
   }
-  const { events, n } = findEvents(pts, lift);
+  const { events, n, range } = findEvents(pts, lift);
   const reps = [];
   for (let e = 0; e < events.length; e++) {
     const ev = events[e];
@@ -380,7 +403,10 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
     }
   }
   if (!reps.length) {
-    return { ok: false, error: '반복 동작을 찾지 못했습니다. 최소 1회 이상 완전한 반복이 담긴 영상을 사용해 주세요.' };
+    const why = range < 0.12
+      ? `움직임이 거의 잡히지 않았습니다 (관절 인식 ${pts.length}/${frames.length}프레임). 종목 선택이 맞는지, 몸 전체가 화면에 보이는지 확인해 주세요.`
+      : `움직임은 잡혔지만 시작-끝이 완전한 반복을 찾지 못했습니다 (관절 인식 ${pts.length}/${frames.length}프레임). 영상이 반복 중간에 시작·종료되지 않았는지, 종목 선택이 맞는지 확인해 주세요.`;
+    return { ok: false, error: `반복 동작을 찾지 못했습니다. ${why}` };
   }
 
   // 기준 몸통 길이: 상단(서 있는) 자세들의 중앙값
