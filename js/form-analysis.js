@@ -249,41 +249,85 @@ function analyzeSquatRep(pts, prevTop, bottom, nextTop, n, T) {
   };
 }
 
+// 벤치프레스 (파워리프팅 기술 기준, 측면)
+//  셋업: 견갑 후인·하강 + 상부 등 아치 + 엉덩이·발 고정 → 프레스 중 어깨·엉덩이·발이 움직이면 셋업이 풀린 것
+//  호흡: 락아웃에서 들이쉬고 반복 중 유지 (하단 복압 재설정은 없음)
+//  하강: 1~2초 통제, 명치 부근 일정한 터치 / 하단: 전완 수직, 대회는 정지
+//  프레스: 가슴 → 어깨 쪽(얼굴 방향) J 경로, 락아웃은 바가 어깨 관절 위
 function analyzeBenchRep(pts, prevTop, bottom, nextTop, n, T) {
   const p = pts[bottom].p;
+  const torso = dist(p.shoulder, p.hip) || 1;
+  const headDir = Math.sign(p.shoulder.x - p.hip.x) || -1; // 머리 쪽 방향 (화면 x)
   const elbowBottom = angle(p.shoulder, p.elbow, p.wrist);
   const forearm = dist(p.elbow, p.wrist);
   const stack = Math.abs(p.wrist.x - p.elbow.x) / forearm;
   const issues = [];
+  const metrics = { elbow: +elbowBottom.toFixed(0) };
+
+  // 터치 위치: 어깨(0) → 골반(1) 방향 몸통 길이 비율. 명치 부근 ≈ 0.15~0.5
+  const touch = ((p.wrist.x - p.shoulder.x) * -headDir) / torso;
+  metrics.touch = +touch.toFixed(2);
+  if (touch < 0.08) issues.push(issue('warn', `터치 위치가 높음 (쇄골·목 쪽, ${touch.toFixed(2)}): 명치 부근으로 내리고 팔꿈치를 몸 쪽으로 살짝 모으기`));
+  else if (touch > 0.6) issues.push(issue('warn', `터치 위치가 낮음 (배 쪽, ${touch.toFixed(2)}): 가슴 아래쪽·명치에 터치`));
+  else issues.push(issue('good', '터치 위치 적정 (명치 부근)'));
+
   if (stack < 0.3) issues.push(issue('good', '하단에서 전완이 수직 (손목-팔꿈치 정렬)'));
-  else issues.push(issue('warn', '하단에서 손목이 팔꿈치 위에 있지 않음: 바 위치나 그립 너비 조정'));
+  else issues.push(issue('warn', '하단에서 전완이 기울어짐: 그립 너비나 팔꿈치 위치를 조정해 손목을 팔꿈치 위로'));
   if (elbowBottom > 110) issues.push(issue('warn', `가동범위 부족 가능 (팔꿈치 ${elbowBottom.toFixed(0)}°): 바가 가슴에 닿는지 확인`));
 
-  if (nextTop != null) {
-    const t = pts[nextTop].p;
-    const lock = angle(t.shoulder, t.elbow, t.wrist);
-    if (!T._oblique) {
-      if (lock < T.benchLockout) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
-      else issues.push(issue('good', '락아웃 완료'));
-    }
+  // 하강 통제
+  if (prevTop != null) {
+    // 락아웃에서 쉬는 시간은 빼고, 실제로 내려가기 시작한 시점부터
+    let start = prevTop;
+    while (start < bottom - 1 && n[start + 1] - n[prevTop] < 0.05) start++;
+    const down = pts[bottom].t - pts[start].t;
+    metrics.descentSec = +down.toFixed(1);
+    if (down < 0.6) issues.push(issue('warn', `하강이 너무 빠름 (${down.toFixed(1)}초): 통제하며 1~2초에 내리고 가슴에서 튕기지 않기`));
   }
-  // 정지(퍼즈) 시간
+
+  // 정지(퍼즈)
   let pause = 0;
   for (let i = bottom; i > 0 && n[i] > 0.92; i--) pause += pts[i].t - pts[i - 1].t;
   for (let i = bottom; i < pts.length - 1 && n[i] > 0.92; i++) pause += pts[i + 1].t - pts[i].t;
+  metrics.pause = +pause.toFixed(1);
   if (pause >= 0.4) issues.push(issue('good', `가슴에서 정지 ${pause.toFixed(1)}초 (대회 퍼즈 OK)`));
   else if (T.benchPauseRequired) issues.push(issue('bad', '가슴에서 정지 없음: 대회 기준 실패 (1초 정지 필요)'));
   else issues.push(issue('info', '터치앤고: 대회 준비 중이면 1초 정지 연습'));
 
+  if (nextTop != null) {
+    const t = pts[nextTop].p;
+    const conc = pts.slice(bottom, nextTop + 1);
+    if (!T._oblique) {
+      const lock = angle(t.shoulder, t.elbow, t.wrist);
+      if (lock < T.benchLockout) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`));
+      else issues.push(issue('good', '락아웃 완료'));
+    }
+    // J 경로: 하단 → 락아웃에서 바가 머리 쪽(어깨 위)으로 돌아와야 함
+    const jBack = ((t.wrist.x - p.wrist.x) * headDir) / torso;
+    const overShoulder = Math.abs(t.wrist.x - t.shoulder.x) / torso;
+    metrics.jBack = +jBack.toFixed(2);
+    if (jBack < 0.03 && touch > 0.15) issues.push(issue('warn', '바가 어깨 쪽으로 돌아오지 않고 올라감: 가슴에서 밀어낼 때 얼굴 방향으로 밀어 J 경로로 락아웃'));
+    if (overShoulder > 0.2) issues.push(issue('warn', `락아웃 위치가 어깨 위가 아님 (${(overShoulder * 100).toFixed(0)}% 벗어남): 바를 어깨 관절 위에서 마무리`));
+    // 셋업 유지: 엉덩이·어깨·발
+    const hipUp = Math.max(...conc.map((f) => (p.hip.y - f.p.hip.y) / torso));
+    const shoulderUp = Math.max(...conc.map((f) => (p.shoulder.y - f.p.shoulder.y) / torso));
+    const feet = Math.max(...conc.map((f) => dist(f.p.ankle, p.ankle) / torso));
+    metrics.buttLift = Math.round(Math.max(0, hipUp) * 100);
+    metrics.shoulderLift = Math.round(Math.max(0, shoulderUp) * 100);
+    if (hipUp > 0.08) issues.push(issue('bad', '엉덩이가 벤치에서 뜸 (대회 실격): 레그 드라이브는 발로 바닥을 머리 쪽으로 밀고 엉덩이는 붙인 채'));
+    if (shoulderUp > 0.12) issues.push(issue('warn', '프레스 중 어깨가 들림 (견갑 풀림): 견갑을 뒤로·아래로 고정한 채 밀고, 락아웃에서 어깨를 내밀지 않기'));
+    if (feet > 0.12) issues.push(issue('warn', '발이 움직임: 셋업에서 발 위치를 정하고 반복 내내 고정'));
+  }
+
   return {
-    metrics: { elbow: +elbowBottom.toFixed(0), pause: +pause.toFixed(1) },
+    metrics,
     issues,
     conc: nextTop != null ? [pts[bottom].t, pts[nextTop].t] : null,
     ecc: prevTop != null ? [pts[prevTop].t, pts[bottom].t] : null,
     descent: prevTop != null ? pts[bottom].t - pts[prevTop].t : null,
     ascent: nextTop != null ? pts[nextTop].t - pts[bottom].t : null,
     keyFrame: bottom,
-    braceI: prevTop,
+    braceI: null, // 벤치는 하단 복압 재설정 개념이 없음 (호흡은 락아웃에서)
   };
 }
 
@@ -383,11 +427,11 @@ function analyzeDeadliftRep(pts, start, top, n, T) {
 }
 
 // 브레이싱 근사 지표 (복압 자체는 영상으로 측정 불가)
-function bracing(pts, n, rep, refTrunk, lift, T) {
+function bracing(pts, n, rep, refTrunk, lift, T, sagittal = true) {
   const out = [];
   const metrics = {};
   // 1) 반복 직전 정지 시간: 숨 채우고 복압 잡을 시간
-  if (rep.braceI != null) {
+  if (rep.braceI != null && lift !== 'bench') {
     const d = dwell(pts, n, rep.braceI);
     metrics.braceSec = +d.toFixed(1);
     if (d < T.rebraceSec) out.push(issue('warn', `반복 직전 정지 ${d.toFixed(1)}초: 숨을 다시 채우고 복압을 잡을 시간 없이 연속 수행. 무거운 세트는 반복마다 재브레이싱`));
@@ -397,14 +441,14 @@ function bracing(pts, n, rep, refTrunk, lift, T) {
   const seg = pts.filter((f) => f.t >= t0 && f.t <= t1);
   if (seg.length < 3) return { issues: out, metrics };
   // 2) 몸통 길이 감소: 척추가 굽거나 복압이 풀려 몸통이 접힘 (벤치는 아치, OHP는 어깨 으쓱 때문에 제외)
-  if ((lift === 'squat' || lift === 'deadlift') && refTrunk) {
+  if (sagittal && (lift === 'squat' || lift === 'deadlift') && refTrunk) {
     const minTrunk = Math.min(...seg.map((f) => dist(f.p.shoulder, f.p.hip)));
     const shrink = ((refTrunk - minTrunk) / refTrunk) * 100;
     metrics.trunkShrink = Math.max(0, Math.round(shrink));
     if (shrink > T.trunkShrinkPct) out.push(issue('warn', `몸통 길이 ${shrink.toFixed(0)}% 짧아짐: 등이 말리거나 복압이 풀린 신호. 하강 전 360° 복압, 갈비뼈 고정`));
   }
   // 3) 상승 중 상체가 순간적으로 꺾임
-  if (rep.conc && lift !== 'bench') {
+  if (sagittal && rep.conc && lift !== 'bench') {
     const cs = pts.filter((f) => f.t >= rep.conc[0] && f.t <= rep.conc[1]);
     let jerk = 0;
     for (let i = 0; i < cs.length; i++) {
@@ -452,12 +496,21 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
   reps.forEach((r, i) => {
     r.rep = i + 1;
     if (!sagittal) { r.issues = []; r.metrics = {}; }
-    const b = bracing(pts, n, r, sagittal ? refTrunk : null, sagittal ? lift : 'bench', T);
+    const b = bracing(pts, n, r, sagittal ? refTrunk : null, lift, T, sagittal);
     r.issues.push(...b.issues);
     Object.assign(r.metrics, b.metrics);
   });
 
   const summary = [];
+  if (lift === 'bench' && sagittal) {
+    const touches = reps.map((r) => r.metrics.touch).filter(Number.isFinite);
+    if (touches.length >= 2) {
+      const mean = touches.reduce((a, b) => a + b, 0) / touches.length;
+      const sd = Math.sqrt(touches.reduce((a, b) => a + (b - mean) ** 2, 0) / touches.length);
+      if (sd > 0.06) summary.push(issue('warn', `터치 위치가 회차마다 다름 (편차 ${(sd * 100).toFixed(0)}%): 하강 중 견갑 고정을 유지해 매번 같은 지점에 터치`));
+      else summary.push(issue('good', '회차 간 터치 위치 일정'));
+    }
+  }
   const asc = reps.map((r) => r.ascent).filter((x) => x != null);
   if (asc.length >= 2) {
     const slow = asc[asc.length - 1] / asc[0];
@@ -488,7 +541,7 @@ export function finalize(reps, summary) {
 // 셀프 체크리스트 점수 (영상 없이도 매일 기록 가능)
 export const CHECKLIST = {
   squat: ['하강 전 숨 채우고 360° 복압', '무릎이 발끝 방향으로', '발 전체(삼각지지)로 지면 누르기', '깊이 패러렐 이하', '바가 미드풋 위 수직 경로'],
-  bench: ['견갑 후인·하강 유지', '엉덩이 벤치에 고정', '레그 드라이브로 힘 전달', '가슴 터치 일정한 위치', '손목 중립, 전완 수직'],
+  bench: ['견갑 후인·하강 고정 (어깨를 뒤로·아래로)', '상부 등 아치 + 엉덩이 벤치에 고정', '발 고정, 바닥을 밀어 레그 드라이브', '락아웃에서 숨 채우고 반복 중 유지 (가슴 높게)', '하강 통제, 명치 부근 같은 지점 터치', '전완 수직, 바는 손바닥 아래쪽', '어깨 쪽으로 밀어 J 경로, 락아웃은 어깨 위'],
   ohp: ['둔근·복근 조여 허리 젖히지 않기', '팔꿈치가 바 바로 아래', '머리를 바 아래로 밀어 넣기', '락아웃에서 어깨 으쓱', '무릎 반동 없음'],
   deadlift: ['바를 정강이에 붙이고 시작', '광배근 긴장(바 휘게 당기기)', '당기기 전 슬랙 제거 + 복압', '엉덩이·어깨 동시 상승', '락아웃 과신전 없음'],
 };

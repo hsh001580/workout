@@ -56,7 +56,15 @@ const FLAG_RULES = [
   ['heel', /뒤꿈치 .*들림/],
   ['barPath', /미드풋|바 경로|바가 미드풋/],
   ['brace', /재브레이싱|몸통 길이|복압이 풀린/],
-  ['lockout', /락아웃 불완전|락아웃에서 바가/],
+  ['lockout', /락아웃 불완전|락아웃에서 바가 미드풋/],
+  ['jcurve', /어깨 쪽으로 돌아오지 않고|락아웃 위치가 어깨 위가 아님|락아웃에서 바가 어깨 관절/],
+  ['touchHigh', /터치 위치가 높음/],
+  ['touchLow', /터치 위치가 낮음/],
+  ['touchVar', /터치 위치가 회차마다/],
+  ['buttLift', /엉덩이가 벤치에서 뜸/],
+  ['shoulderLift', /어깨가 들림/],
+  ['feet', /발이 움직임/],
+  ['descentFast', /하강이 너무 빠름/],
   ['layback', /젖힘|과신전/],
   ['kneeDip', /무릎 반동/],
   ['pause', /정지 없음/],
@@ -99,6 +107,14 @@ const FIX = {
     stickHigh: { v: ['블록 풀 (무릎 높이)', 3, 3, 0.8], cue: '무릎 지나서 엉덩이를 앞으로' },
   },
   bench: {
+    buttLift: { v: ['피트업 벤치 (다리 들고)', 3, 6, 0.6], cue: '레그 드라이브는 발로 바닥을 머리 쪽으로 밀기, 엉덩이는 벤치에 붙인 채', acc: ['힙 브릿지 홀드 3×30초'] },
+    shoulderLift: { v: ['스포토 프레스 (가슴 위 2cm 정지)', 3, 4, 0.65], cue: '견갑을 뒤로·아래로 고정하고 바를 구부리듯 쥐기, 락아웃에서 어깨를 내밀지 않기', acc: ['페이스 풀 3×15', '밴드 풀어파트 3×20'] },
+    touchVar: { v: ['퍼즈 벤치 (가슴 2초)', 3, 3, 0.7], cue: '하강 중 견갑 고정 유지, 매 회차 같은 지점(명치)에 터치' },
+    touchHigh: { v: ['퍼즈 벤치 (명치 터치 1초)', 3, 3, 0.7], cue: '바를 명치 부근으로 내리고 팔꿈치를 몸 쪽으로 살짝 모으기' },
+    touchLow: { v: ['퍼즈 벤치 (가슴 1초)', 3, 3, 0.7], cue: '팔꿈치를 과하게 붙이지 말고 가슴 아래쪽에 터치' },
+    descentFast: { v: ['템포 벤치 (3초 하강)', 3, 5, 0.65], cue: '하강은 통제하며 1~2초, 가슴에서 튕기지 않기' },
+    jcurve: { v: ['템포 벤치 (3초 하강)', 3, 5, 0.62], cue: '가슴에서 밀어낼 때 바를 얼굴 방향으로 밀어 어깨 위에서 락아웃 (J 경로)' },
+    feet: { cue: '셋업에서 발 위치를 정하고 반복 내내 고정' },
     pause: { v: ['퍼즈 벤치 (가슴 2초)', 3, 3, 0.72], cue: '가슴에서 완전히 멈춘 뒤 프레스' },
     lockout: { v: ['클로즈그립 벤치', 3, 5, 0.7], cue: '팔꿈치를 끝까지 펴며 어깨 위에서 마무리', acc: ['트라이셉스 푸시다운 +1세트'] },
     flare: { v: ['템포 벤치 (3초 하강)', 3, 5, 0.65], cue: '하강 시 팔꿈치 45~70°, 바는 명치 쪽으로' },
@@ -284,8 +300,10 @@ export function prescribe(lift, ctx) {
   if (fix) {
     cues.push(fix.cue);
     if (fix.acc) accessories.push(...fix.acc);
-    const [vn, vs, vr, vp] = fix.v;
-    variation = { name: vn, sets: phase.deload ? 1 : vs, reps: vr, kg: vp ? round25(e1rm * vp) : null, why: `지난 세션 ${fixLabel(fix.code)}` };
+    if (fix.v) {
+      const [vn, vs, vr, vp] = fix.v;
+      variation = { name: vn, sets: phase.deload ? 1 : vs, reps: vr, kg: vp ? round25(e1rm * vp) : null, why: `지난 세션 ${fixLabel(fix.code)}` };
+    }
   }
 
   if (ctx.secondary) {
@@ -312,6 +330,8 @@ function fixLabel(code) {
     depth: '깊이 부족', hipShoot: '엉덩이가 먼저 뜸·상체 무너짐', valgus: '무릎 밸거스', hipShift: '힙 시프트', heel: '뒤꿈치 들림',
     barPath: '바 경로 이탈', brace: '브레이싱 약함', lockout: '락아웃 약함', layback: '과신전', kneeDip: '무릎 반동', pause: '퍼즈 미흡',
     forearm: '전완 정렬', flare: '팔꿈치 벌어짐', barTilt: '바벨 기울어짐', dlStart: '시작 자세', stickLow: '하단 스티킹', stickHigh: '상단 스티킹',
+    jcurve: '바 경로(J 경로) 이탈', touchHigh: '터치 위치 높음', touchLow: '터치 위치 낮음', touchVar: '터치 위치 불일정',
+    buttLift: '엉덩이 들림', shoulderLift: '견갑 풀림', feet: '발 움직임', descentFast: '하강 통제 부족',
   }[code] || code;
 }
 
