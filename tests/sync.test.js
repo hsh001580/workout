@@ -72,3 +72,12 @@ test('암호화 → 같은 비밀번호로만 복호화', async () => {
   assert.deepEqual(await decrypt(enc, 'pw'), doc);
   await assert.rejects(decrypt(enc, 'nope'));
 });
+
+test('옛 설정(최소 원판 항목 없음)이 동기화돼 와도 무게는 5kg 단위', async () => {
+  const { prescribe, phaseAt } = await import('../js/coach.js');
+  const old = { squat1rm: 152, bench1rm: 97, deadlift1rm: 187, ohp1rm: 63, startDate: '2026-11-02' }; // minPlate 없음
+  for (const lift of ['squat', 'bench', 'deadlift', 'ohp']) {
+    const r = prescribe(lift, { state: { formLogs: [], coach: {} }, settings: old, phase: phaseAt(0, {}), date: '2026-12-01' });
+    assert.equal(r.kg % 5, 0, `${lift} ${r.kg}`);
+  }
+});

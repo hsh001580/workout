@@ -21,7 +21,8 @@ export function pctOf(reps, rpe) {
 export const e1rmOf = (kg, reps, rpe) => kg / pctOf(reps, rpe);
 export const round25 = (kg) => Math.round(kg / 2.5) * 2.5;
 // 가장 작은 원판(한쪽) × 2 = 바벨 무게 단위. 1.25kg 원판이 없으면 5kg 단위
-export const plateStep = (settings) => 2 * (Number(settings?.minPlate) > 0 ? Number(settings.minPlate) : 1.25);
+// 설정이 없을 때(예전 백업·다른 기기에서 동기화된 옛 설정)도 기본값 2.5kg 원판 → 5kg 단위
+export const plateStep = (settings) => 2 * (Number(settings?.minPlate) > 0 ? Number(settings.minPlate) : 2.5);
 export const roundLoad = (kg, step = 2.5) => Math.round(kg / step) * step;
 export const loadFor = (e1, reps, rpe, step = 2.5) => roundLoad(e1 * pctOf(reps, rpe), step);
 

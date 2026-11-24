@@ -45,6 +45,8 @@ async function runSync(manual) {
       saveSyncConf(r.conf);
       if (r.state) {
         Object.assign(state, r.state);
+        // 다른 기기의 옛 설정에 없는 항목(새로 생긴 설정)은 기본값으로 채움
+        state.settings = { ...defaultState().settings, ...state.settings };
         save(state);
         rerenderActive();
         // 설정 탭을 보고 있으면 입력란도 갱신 (옛 값으로 다시 저장해 덮어쓰는 것 방지)

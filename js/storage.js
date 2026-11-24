@@ -22,7 +22,7 @@ export function defaultState() {
       deadlift1rm: 180,
       ohp1rm: 60,
       tmPercent: 90,
-      minPlate: 2.5, // 가장 작은 원판 (한쪽, kg) → 무게 단위 = ×2 // 트레이닝 맥스 = 1RM의 %
+      minPlate: 2.5, // 가장 작은 원판 (한쪽, kg) → 무게 단위 = ×2
       weeklyKm: 20, // 가민 기록이 없을 때만 사용
       fiveK: '25:00',
       hrMax: 190,

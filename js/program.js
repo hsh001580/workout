@@ -1,7 +1,7 @@
 // 4일 로테이션 웨이트 + 가민 기록 기반 러닝 주간 프로그램
 // 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔 + 오버헤드프레스 2회차) → D(휴식) 반복
 // coach 컨텍스트가 있으면 코칭 엔진(coach.js)이 블록 단계·기록·자세·컨디션으로 처방을 만든다.
-import { phaseAt, prescribe, accessoryScale, garminCheckin } from './coach.js';
+import { phaseAt, prescribe, accessoryScale, garminCheckin, plateStep } from './coach.js';
 
 export const DAY_NAMES = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -222,9 +222,9 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
     } else {
       for (const lift of rotation.lifts) {
         const h = wave.heavy;
-        const kg = roundTo((tm[lift] * h.pct) / 100, 2 * (Number(settings.minPlate) || 1.25));
+        const kg = roundTo((tm[lift] * h.pct) / 100, plateStep(settings));
         let detail = `${h.sets}세트 × ${h.reps}회 @ ${kg}kg (TM ${h.pct}%)`;
-        if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100, 2 * (Number(settings.minPlate) || 1.25))}kg`;
+        if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100, plateStep(settings))}kg`;
         items.push({
           type: 'lift', lift, kind: 'heavy',
           title: LIFT_KO[lift], detail, kg, sets: h.sets, reps: h.reps,
