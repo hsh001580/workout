@@ -65,7 +65,7 @@ test('깊은 스쿼트: 3회 인식, 깊이 OK', () => {
 test('얕은 스쿼트: 깊이 부족 지적', () => {
   const res = analyze(squatFrames(65), 'squat');
   assert.ok(res.ok);
-  assert.ok(res.reps.every((r) => r.issues.some((i) => i.level === 'bad' && i.text.includes('깊이 부족'))));
+  assert.ok(res.reps.every((r) => r.issues.some((i) => i.level === 'bad' && i.text.includes('깊이 미달'))));
   assert.ok(res.finalize() < 85);
   assert.ok(res.summary.some((i) => i.text.includes('반복적으로')));
 });
@@ -83,7 +83,7 @@ test('데드리프트: 반복 인식 및 락아웃 확인', () => {
   const res = analyze(frames, 'deadlift');
   assert.ok(res.ok, res.error);
   assert.equal(res.reps.length, 2);
-  assert.ok(res.reps.every((r) => r.issues.some((i) => i.text === '락아웃 완료')));
+  assert.ok(res.reps.every((r) => r.issues.some((i) => i.text.startsWith('락아웃 완료'))));
 });
 
 test('벤치: 락아웃 불완전 감지', () => {

@@ -53,7 +53,7 @@ test('스쿼트: 랙 안에서 바 메기 + 워크아웃 + 워크인 + 랙 + 손
   const res = evaluateForm({ frames, lift: 'squat', view: 'side' });
   assert.ok(res.ok, res.error);
   assert.equal(res.reps.length, 3);
-  assert.match(res.summary[0].text, /준비 구간 자동 제외/);
+  assert.ok(res.summary.some((i) => /준비 구간 자동 제외/.test(i.text)));
 });
 
 const press = (h) => (sh) => ({ x: sh.x + 0.01, y: sh.y - 0.02 - 0.24 * h });
@@ -142,7 +142,7 @@ test('입력한 반복 수에 맞춰 민감도 자동 조정 + 불일치 경고'
   assert.equal(plain.reps.length, 2);
   const hinted = evaluateForm({ frames, lift: 'squat', view: 'side', expectedReps: 4 });
   assert.equal(hinted.reps.length, 4);
-  assert.ok(hinted.reps[1].issues.some((i) => /깊이 부족/.test(i.text)), '얕은 회차는 깊이 부족으로 평가');
+  assert.ok(hinted.reps[1].issues.some((i) => /깊이 미달|깊이 경계/.test(i.text)), '얕은 회차는 깊이 부족으로 평가');
   const wrong = evaluateForm({ frames, lift: 'squat', view: 'side', expectedReps: 6 });
   assert.ok(wrong.summary.some((i) => /입력한 반복 수는 6회/.test(i.text)));
 });

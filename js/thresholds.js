@@ -4,8 +4,15 @@
 export const THRESHOLD_META = {
   // 측면(시상면)
   squatDepthWarn: { label: '스쿼트 깊이 경고 (깊이비, 0=패러렐)', group: '측면' },
-  torsoLeanWarn: { label: '스쿼트 상체 기울기 경고 (°)', group: '측면' },
-  torsoLeanBad: { label: '스쿼트 상체 기울기 감점 (°)', group: '측면' },
+  torsoHighWarn: { label: '하이바 스쿼트 상체각 경고 (°)', group: '측면' },
+  torsoHighBad: { label: '하이바 스쿼트 상체각 감점 (°)', group: '측면' },
+  torsoLowWarn: { label: '로우바 스쿼트 상체각 경고 (°)', group: '측면' },
+  torsoLowBad: { label: '로우바 스쿼트 상체각 감점 (°)', group: '측면' },
+  dlBackShiftConv: { label: '컨벤셔널 데드 초반 등 각도 무너짐 (°)', group: '측면' },
+  dlBackShiftSumo: { label: '스모 데드 초반 등 각도 무너짐 (°)', group: '측면' },
+  downwardTol: { label: '상승 중 하강 판정 (반복 폭 대비)', group: '규정' },
+  benchElbowAbove: { label: '벤치 팔꿈치 깊이: 어깨보다 높은 허용치 (몸통 대비)', group: '규정' },
+  consistencyPct: { label: '회차 간 편차 경고 (%)', group: '일관성' },
   hipShootDeg: { label: '엉덩이 먼저 뜨기: 상체 증가 (°)', group: '측면' },
   benchLockout: { label: '벤치 락아웃 최소 팔꿈치 각 (°)', group: '측면' },
   benchPauseRequired: { label: '벤치 퍼즈 필수 (1=예, 0=아니오)', group: '측면' },
@@ -39,8 +46,18 @@ export const THRESHOLD_META = {
 
 const BASE = {
   squatDepthWarn: -0.12,
-  torsoLeanWarn: 50,
-  torsoLeanBad: 60,
+  // 스쿼트 상체각: 바 위치(스타일)별. 로우바는 원래 더 숙여짐 (연구: 로우바 > 하이바 > SSB)
+  torsoHighWarn: 45,
+  torsoHighBad: 55,
+  torsoLowWarn: 58,
+  torsoLowBad: 68,
+  torsoLeanWarn: 52, // 스타일 미확인
+  torsoLeanBad: 62,
+  dlBackShiftConv: 12,
+  dlBackShiftSumo: 8,
+  downwardTol: 0.06,
+  benchElbowAbove: 0.12,
+  consistencyPct: 8,
   hipShootDeg: 10,
   benchLockout: 155,
   benchPauseRequired: 0,
@@ -51,8 +68,9 @@ const BASE = {
   midfootBadCm: 8,
   hipMomentRisePct: 15,
   velocityLossWarn: 25,
-  valgusWarn: 8,
-  valgusBad: 15,
+  // 무릎 밸거스: 고중량 상승 구간에서 흔하고 건강한 리프터의 부상 위험과의 연관 근거가 약해 완화 (통증 시 별도 처리)
+  valgusWarn: 12,
+  valgusBad: 20,
   kneeToeWarn: 15,
   hipShiftWarnCm: 3,
   hipShiftBadCm: 5,
@@ -70,26 +88,21 @@ const BASE = {
 };
 
 export const PRESETS = {
-  balanced: { name: '균형 (기본)', desc: '일반적인 근력 코칭 기준', values: {} },
+  balanced: { name: '현역 기준 (기본)', desc: 'IPF 규정 판정 + 효율·일관성 중심. 무릎 밸거스는 큰 경우만 지적', values: {} },
   meet: {
-    name: '파워리프팅 대회 (엄격)',
-    desc: '심판 기준에 가깝게: 깊이 여유 없음, 벤치 퍼즈 필수, 락아웃 엄격',
-    values: { squatDepthWarn: 0, benchPauseRequired: 1, benchLockout: 165, lockoutAngle: 168, midfootWarnCm: 4, midfootBadCm: 7 },
+    name: '대회 직전 (엄격)',
+    desc: '심판 기준에 여유 없이: 깊이 여유 없음, 벤치 퍼즈 필수, 락아웃 엄격',
+    values: { squatDepthWarn: 0, benchPauseRequired: 1, benchLockout: 165, lockoutAngle: 168, midfootWarnCm: 4, midfootBadCm: 7, benchElbowAbove: 0.08 },
   },
-  lowbar: {
-    name: '로우바 · 고관절 주도',
-    desc: '상체 기울기 허용 범위를 넓히고 바-미드풋 정렬을 엄격하게',
-    values: { torsoLeanWarn: 60, torsoLeanBad: 70, midfootWarnCm: 4, midfootBadCm: 6 },
-  },
-  highbar: {
-    name: '하이바 · 상체 세우기',
-    desc: '상체를 세우는 스쿼트 기준',
-    values: { torsoLeanWarn: 40, torsoLeanBad: 50 },
+  kneeStrict: {
+    name: '무릎 보수적 (재활·통증 이력)',
+    desc: '무릎 통증·불안정 이력이 있을 때: 밸거스와 무릎-발끝 정렬을 엄격하게',
+    values: { valgusWarn: 8, valgusBad: 15, kneeToeWarn: 12 },
   },
   tolerant: {
     name: '관대한 무릎 기준',
-    desc: '상승 중 약간의 무릎 안쪽 움직임은 정상 범위로 보는 관점',
-    values: { valgusWarn: 12, valgusBad: 20, kneeToeWarn: 20 },
+    desc: '상승 중 무릎 움직임을 더 넓게 허용',
+    values: { valgusWarn: 15, valgusBad: 25, kneeToeWarn: 20 },
   },
 };
 

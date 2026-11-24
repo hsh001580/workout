@@ -49,8 +49,12 @@ export function phaseAt(weekIdx, coachState = {}) {
 
 // ---------- 자세 결함 코드 (평가 문구 → 코드) ----------
 const FLAG_RULES = [
-  ['depth', /깊이 부족|거의 패러렐/],
-  ['hipShoot', /엉덩이가 먼저|고관절 모멘트암 \d+% 증가|상체가 0\.2초|상체가 과도하게 숙여짐/],
+  ['depth', /깊이 미달|깊이 경계|깊이 부족|거의 패러렐/],
+  ['downward', /상승 중 하강|당기는 중 하강|프레스 중 하강|히칭/],
+  ['elbowDepth', /팔꿈치 깊이 (미달|경계)/],
+  ['headLift', /머리 들림/],
+  ['consistency', /깊이가 회차마다|상체각이 회차마다|시작 자세가 회차마다|등 각도 변화가 회차마다|젖힘이 회차마다/],
+  ['hipShoot', /엉덩이가 먼저|엉덩이 먼저 뜸|고관절 모멘트암 \d+% 증가|상체가 0\.2초|기준보다 크게 숙여짐/],
   ['valgus', /무릎이 안쪽으로|무릎이 발끝 방향보다/],
   ['hipShift', /골반이 (왼|오른)쪽으로/],
   ['heel', /뒤꿈치 .*들림/],
@@ -63,7 +67,7 @@ const FLAG_RULES = [
   ['touchVar', /터치 위치가 회차마다/],
   ['buttLift', /엉덩이가 벤치에서 뜸/],
   ['shoulderLift', /어깨가 들림/],
-  ['feet', /발이 움직임/],
+  ['feet', /발이 움직임|발 위치 이동|발을 옮김/],
   ['descentFast', /하강이 너무 빠름/],
   ['layback', /젖힘|과신전/],
   ['kneeDip', /무릎 반동/],
@@ -71,7 +75,7 @@ const FLAG_RULES = [
   ['forearm', /전완|팔꿈치가 바 (아래|바로)/],
   ['flare', /팔꿈치 벌어짐/],
   ['barTilt', /바벨이 좌우로/],
-  ['dlStart', /엉덩이가 높음|엉덩이가 너무 낮음|정강이에 붙이고/],
+  ['dlStart', /미드풋에서 멀리 떨어진 채 시작|미드풋보다 앞에서 시작|어깨가 바 뒤에|스모인데 무릎/],
 ];
 
 export function flagsOf(texts = []) {
@@ -87,6 +91,9 @@ export function flagsOf(texts = []) {
 // 결함 → 변형 운동 (pct는 e1RM 대비), 보조 운동, 큐
 const FIX = {
   squat: {
+    downward: { v: ['퍼즈 스쿼트 (하단 2초)', 3, 3, 0.68], cue: '하단에서 한 번에 일어서기: 멈칫해도 다시 내려가지 않게 가속 유지 (실격 사유)' },
+    feet: { cue: '셋업에서 발 위치를 정하고 반복 내내 발 전체로 지면 누르기' },
+    consistency: { v: ['템포 스쿼트 (3초 하강)', 3, 4, 0.62], cue: '매 회차 같은 깊이·상체각: 하강 템포를 일정하게' },
     depth: { v: ['퍼즈 스쿼트 (하단 2초)', 3, 3, 0.68], cue: '하강 끝에서 고관절을 무릎 아래까지, 정지 중에도 복압 유지' },
     hipShoot: { v: ['템포 스쿼트 (3초 하강·1초 정지)', 3, 4, 0.63], cue: '올라올 때 가슴과 엉덩이를 같은 속도로, 등 상부로 바를 밀기', acc: ['프론트 스쿼트 또는 SSB 스쿼트 3×6'] },
     valgus: { v: ['템포 스쿼트 + 무릎 위 미니밴드', 3, 5, 0.6], cue: '발 삼각지지로 바닥을 벌리듯, 무릎은 두 번째 발가락 방향', acc: ['힙 어브덕션 3×15', '불가리안 스플릿 스쿼트 3×8/다리'] },
@@ -97,6 +104,9 @@ const FIX = {
     stickLow: { v: ['핀 스쿼트 (스티킹 높이에서 시작)', 3, 3, 0.7], cue: '스티킹 구간에서 가속 의도 유지' },
   },
   deadlift: {
+    downward: { v: ['블록 풀 (무릎 높이)', 3, 3, 0.8], cue: '락아웃까지 한 번에: 허벅지에 바를 얹거나 다시 내렸다 올리지 않기 (실격 사유)', acc: ['힙 쓰러스트 3×8'] },
+    feet: { cue: '셋업 후 발 고정' },
+    consistency: { v: ['데드리프트 (매 회차 바닥에서 셋업 리셋)', 3, 2, 0.75], cue: '매 회차 같은 셋업 순서: 발 → 그립 → 슬랙 제거 → 숨 → 당기기' },
     hipShoot: { v: ['퍼즈 데드리프트 (무릎 아래 1초)', 3, 3, 0.65], cue: '다리로 바닥을 밀며 가슴과 엉덩이를 같이 올리기' },
     dlStart: { v: ['퍼즈 데드리프트 (무릎 아래 1초)', 3, 3, 0.65], cue: '정강이를 바에 붙이고, 엉덩이 높이는 어깨와 무릎 사이' },
     barPath: { v: ['퍼즈 데드리프트 (무릎 아래 1초)', 3, 3, 0.63], cue: '광배근으로 바를 몸에 붙이기 (겨드랑이 조이기)', acc: ['스트레이트암 풀다운 3×12'] },
@@ -107,6 +117,9 @@ const FIX = {
     stickHigh: { v: ['블록 풀 (무릎 높이)', 3, 3, 0.8], cue: '무릎 지나서 엉덩이를 앞으로' },
   },
   bench: {
+    downward: { v: ['핀 프레스 (스티킹 높이)', 3, 3, 0.75], cue: '밀기 시작한 뒤 바가 다시 내려가지 않게 끝까지 가속 (실격 사유)' },
+    elbowDepth: { v: ['퍼즈 벤치 (가슴 2초)', 3, 3, 0.7], cue: '바를 가슴(명치)까지 완전히 내려 팔꿈치가 어깨 높이 이하로 (2023 IPF 규정)' },
+    headLift: { cue: '뒤통수로 벤치를 누른 채 프레스 (머리 들면 실격)' },
     buttLift: { v: ['피트업 벤치 (다리 들고)', 3, 6, 0.6], cue: '레그 드라이브는 발로 바닥을 머리 쪽으로 밀기, 엉덩이는 벤치에 붙인 채', acc: ['힙 브릿지 홀드 3×30초'] },
     shoulderLift: { v: ['스포토 프레스 (가슴 위 2cm 정지)', 3, 4, 0.65], cue: '견갑을 뒤로·아래로 고정하고 바를 구부리듯 쥐기, 락아웃에서 어깨를 내밀지 않기', acc: ['페이스 풀 3×15', '밴드 풀어파트 3×20'] },
     touchVar: { v: ['퍼즈 벤치 (가슴 2초)', 3, 3, 0.7], cue: '하강 중 견갑 고정 유지, 매 회차 같은 지점(명치)에 터치' },
@@ -148,7 +161,9 @@ const DEFAULT_SECONDARY = { bench: ['퍼즈 벤치 (가슴 1초)', 3, 5, 0.7] };
 function pickFix(lift, flags) {
   if (!flags) return null;
   const table = FIX[lift] || {};
-  const ranked = Object.entries(flags).filter(([k]) => k !== 'sticking' && table[k]).sort((a, b) => b[1] - a[1]);
+  // 규정 위반(실격 사유)을 먼저 고치고, 그다음 많이 나온 결함
+  const RULE = new Set(['downward', 'elbowDepth', 'headLift', 'buttLift', 'depth', 'feet', 'lockout']);
+  const ranked = Object.entries(flags).filter(([k]) => k !== 'sticking' && table[k]).sort((a, b) => (RULE.has(b[0]) - RULE.has(a[0])) || b[1] - a[1]);
   if (ranked.length) return { code: ranked[0][0], ...table[ranked[0][0]] };
   if (flags.sticking) {
     const k = flags.sticking >= 55 ? 'stickHigh' : 'stickLow';
@@ -332,6 +347,7 @@ function fixLabel(code) {
     forearm: '전완 정렬', flare: '팔꿈치 벌어짐', barTilt: '바벨 기울어짐', dlStart: '시작 자세', stickLow: '하단 스티킹', stickHigh: '상단 스티킹',
     jcurve: '바 경로(J 경로) 이탈', touchHigh: '터치 위치 높음', touchLow: '터치 위치 낮음', touchVar: '터치 위치 불일정',
     buttLift: '엉덩이 들림', shoulderLift: '견갑 풀림', feet: '발 움직임', descentFast: '하강 통제 부족',
+    downward: '상승 중 하강·히칭 (규정)', elbowDepth: '팔꿈치 깊이 (규정)', headLift: '머리 들림 (규정)', consistency: '회차 간 동작 편차',
   }[code] || code;
 }
 

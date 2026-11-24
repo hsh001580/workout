@@ -155,7 +155,11 @@
       </div>
       <div class="card">
         <h2>자세 평가 기준</h2>
-        <p class="muted">코칭 스타일에 따라 판정 기준이 다릅니다. 프리셋을 고르고, 필요하면 아래에서 값을 직접 바꾸세요. 바꾼 값은 프리셋보다 우선합니다.</p>
+        <p class="muted">IPF 규정(2026) 판정 + 효율·주의·일관성으로 평가합니다. 스타일에 따라 상체각·시작 자세 기준이 달라지니 내 스타일을 고르세요. 값을 직접 바꾸면 프리셋보다 우선합니다.</p>
+        <div class="grid2">
+          <label>스쿼트 바 위치 <select id="styleSquat"><option value="auto">자동 (원판 추적 시 판단)</option><option value="highbar">하이바</option><option value="lowbar">로우바</option></select></label>
+          <label>데드리프트 스탠스 <select id="styleDeadlift"><option value="auto">자동 (대각선·정면 영상에서 판단)</option><option value="conventional">컨벤셔널</option><option value="sumo">스모</option></select></label>
+        </div>
         <label>프리셋 <select id="formPreset"></select></label>
         <p id="presetDesc" class="muted"></p>
         <details>

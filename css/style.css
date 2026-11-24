@@ -199,3 +199,9 @@ ul.small { font-size: 0.85rem; padding-left: 18px; }
 .tl-controls { align-items: flex-end; margin-top: 8px; }
 .tl-controls label { width: 110px; }
 .chart.timeline text { font-size: 22px; }
+.ref-lights { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0; font-size: 1.1rem; }
+.ref-lights span { display: flex; flex-direction: column; align-items: center; }
+.ref-lights small { font-size: 0.75rem; color: var(--muted); }
+.cat { margin: 6px 0; }
+.cat-h { font-size: 0.78rem; font-weight: 700; color: var(--muted); margin-top: 6px; }
+.cat-rule .cat-h { color: var(--bad); }

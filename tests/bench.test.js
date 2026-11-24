@@ -58,7 +58,7 @@ test('결함 벤치: 높은 터치·직선 경로·빠른 하강·엉덩이 뜸�
   assert.ok(res.ok, res.error);
   res.finalize();
   const all = texts(res).join('\n');
-  for (const re of [/터치 위치가 높음/, /하강이 너무 빠름/, /엉덩이가 벤치에서 뜸/, /어깨가 들림/, /발이 움직임/]) assert.match(all, re);
+  for (const re of [/터치 위치가 높음/, /하강이 너무 빠름/, /엉덩이가 벤치에서 뜸/, /어깨가 들림/, /발을 옮김/]) assert.match(all, re);
   assert.ok(res.reps.every((r) => r.score < 75));
 });
 

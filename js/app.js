@@ -285,7 +285,7 @@ function runVideoEval(win) {
   return evaluateForm({
     frames: e.frames, lift: e.lift, view: e.view, aspect: e.aspect, T: T(),
     bar: e.bar ? { track: e.bar, scale: e.scale } : null,
-    expectedReps: Number($('#formReps').value) || 0, window: win,
+    expectedReps: Number($('#formReps').value) || 0, window: win, style: state.settings.liftStyle || {},
   });
 }
 
@@ -382,6 +382,19 @@ $('#formAnalyze').addEventListener('click', async () => {
   finishEval(video, { lift, view, checks, rpe, pain, selfScore });
 });
 
+// 판정 범주별 묶음: 규정(심판) → 효율 → 주의 → 일관성
+const CAT_KO = { rule: '규정 (심판 판정)', eff: '효율 (힘 전달)', risk: '주의 (위험 신호)', cons: '일관성' };
+function catList(issues) {
+  const groups = {};
+  for (const i of issues) (groups[i.cat || 'eff'] = groups[i.cat || 'eff'] || []).push(i);
+  return Object.keys(CAT_KO).filter((k) => groups[k]?.length).map((k) => `<div class="cat cat-${k}"><div class="cat-h">${CAT_KO[k]}</div>${fbList(groups[k])}</div>`).join('');
+}
+// 회차별 심판 판정 (규정 항목이 있는 종목만)
+function refLights(reps) {
+  if (!reps.some((r) => r.issues.some((i) => i.cat === 'rule'))) return '';
+  return `<div class="ref-lights">${reps.map((r) => `<span title="${r.rep}회차">${r.rulePass ? '⚪⚪⚪' : '🔴🔴🔴'}<small>${r.rep}회차</small></span>`).join('')}</div>`;
+}
+
 // 분석 결과 → 기록 저장 + 화면 (구간을 바꿔 다시 분석하면 같은 기록을 교체)
 function finishEval(video, c) {
   const { lift, view, checks, rpe, pain, selfScore } = c;
@@ -434,13 +447,13 @@ function finishEval(video, c) {
     ${video && !video.ok ? fbList([{ level: 'warn', text: video.error }]) : ''}
     ${diag.length ? `<h3>힘이 새는 지점</h3>${diag.map((d) => `<div class="diag">${esc(d)}</div>`).join('')}` : ''}
     ${video?.timeline ? timelineHTML(video) : ''}
-    ${video?.ok ? `<h3>세트 요약</h3>${fbList(video.summary.length ? video.summary : [{ level: 'info', text: `${video.reps.length}회 반복 인식` }])}
+    ${video?.ok ? `${refLights(video.reps)}<h3>세트 요약</h3>${catList(video.summary.length ? video.summary : [{ level: 'info', text: `${video.reps.length}회 반복 인식` }])}
       ${!plate ? '<p class="muted">원판을 지정하면 바벨 속도·스티킹 포인트·모멘트암도 분석합니다.</p>' : ''}
       <h3>반복별 분석</h3><p class="muted">가장 낮은 점수의 반복만 펼쳐 둡니다. 눌러서 다른 반복을 확인하세요.</p>
       <div class="reps">${video.reps.map((r) => `<details class="rep" ${r.score === Math.min(...video.reps.map((x) => x.score)) ? 'open' : ''}>
-        <summary><h4><span>${r.rep}회차${r.mcv ? ` · ${r.mcv.toFixed(2)}m/s` : ''}</span><span class="badge ${scoreClass(r.score)}">${r.score}</span></h4></summary>
+        <summary><h4><span>${r.rulePass === false ? '🔴' : r.rulePass ? '⚪' : ''} ${r.rep}회차${r.mcv ? ` · ${r.mcv.toFixed(2)}m/s` : ''}</span><span class="badge ${scoreClass(r.score)}">${r.score}</span></h4></summary>
         <div class="kv">${metricHTML(r.metrics)}${r.ascent != null ? `<span>상승 시간 <b>${r.ascent.toFixed(2)}초</b></span>` : ''}</div>
-        ${fbList(r.issues.filter((i) => !i.text.startsWith('스티킹 포인트')))}</details>`).join('')}</div>` : ''}
+        ${catList(r.issues.filter((i) => !i.text.startsWith('스티킹 포인트')))}</details>`).join('')}</div>` : ''}
     ${tips.length ? `<h3>코칭</h3>${fbList(tips)}` : ''}
     ${next ? `<h3>다음 ${esc(LIFT_KO[lift])} 세션 설계 (${esc(next.date)})</h3>${itemHTML(next.item)}${next.variation ? itemHTML(next.variation) : ''}` : ''}
   </div>`;
@@ -816,6 +829,9 @@ function renderHistory() {
 
 // ---------- 자세 평가 기준 (프리셋) ----------
 function renderPreset() {
+  const ls = state.settings.liftStyle || {};
+  $('#styleSquat').value = ls.squat || 'auto';
+  $('#styleDeadlift').value = ls.deadlift || 'auto';
   const sel = $('#formPreset');
   const cur = state.settings.formPreset || 'balanced';
   sel.innerHTML = Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -849,6 +865,7 @@ $('#savePreset').addEventListener('click', () => {
   });
   state.settings.formPreset = key;
   state.settings.customThresholds = custom;
+  state.settings.liftStyle = { squat: $('#styleSquat').value, deadlift: $('#styleDeadlift').value };
   persist();
   renderThresholdEditor(key);
   $('#presetMsg').textContent = `저장됨 (직접 수정 ${Object.keys(custom).length}개)`;

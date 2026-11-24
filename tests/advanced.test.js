@@ -63,7 +63,8 @@ test('하중-속도 1RM 추정 / RIR', () => {
 
 test('프리셋', () => {
   assert.equal(getThresholds({ formPreset: 'meet' }).benchPauseRequired, 1);
-  assert.equal(getThresholds({ formPreset: 'lowbar', customThresholds: { torsoLeanBad: 75 } }).torsoLeanBad, 75);
+  assert.equal(getThresholds({ formPreset: 'kneeStrict', customThresholds: { torsoLowBad: 75 } }).torsoLowBad, 75);
+  assert.equal(getThresholds({ formPreset: 'kneeStrict' }).valgusWarn, 8);
   assert.ok(Object.keys(PRESETS).length >= 4);
 });
 
@@ -101,7 +102,7 @@ test('후방 45° 3D: 정상 스쿼트는 밸거스 없음, 깊이·반복 인�
   assert.ok(res.ok, res.error);
   assert.equal(res.reps.length, 3);
   assert.ok(res.stats.valgus < 5, `valgus ${res.stats.valgus}`);
-  assert.ok(res.reps.every((r) => r.issues.some((i) => i.text.includes('깊이 충분'))), JSON.stringify(res.reps[0].issues));
+  assert.ok(res.reps.every((r) => r.issues.some((i) => i.text.includes('규정 깊이'))), JSON.stringify(res.reps[0].issues));
 });
 
 test('후방 45° 3D: 오른 무릎 밸거스와 힙 시프트 감지', () => {
