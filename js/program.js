@@ -1,5 +1,5 @@
 // 4일 로테이션 웨이트 + 가민 기록 기반 러닝 주간 프로그램
-// 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔 + 벤치 2회차) → D(휴식) 반복
+// 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔 + 오버헤드프레스 2회차) → D(휴식) 반복
 // coach 컨텍스트가 있으면 코칭 엔진(coach.js)이 블록 단계·기록·자세·컨디션으로 처방을 만든다.
 import { phaseAt, prescribe, accessoryScale, garminCheckin } from './coach.js';
 
@@ -19,7 +19,7 @@ export const ROTATION = [
   { key: 'A', title: '오버헤드프레스 + 스쿼트', lifts: ['squat', 'ohp'], hyp: [['레그 프레스', 3, '10-12'], ['사이드 레터럴 레이즈', 3, '15']] },
   { key: 'B', title: '벤치 + 데드리프트', lifts: ['bench', 'deadlift'], hyp: [['인클라인 덤벨 프레스', 3, '8-12'], ['트라이셉스 푸시다운', 3, '12']] },
   {
-    key: 'C', title: '등 + 팔', lifts: [], secondary: ['bench'], hyp: [
+    key: 'C', title: '등 + 팔 + 오버헤드프레스', lifts: [], secondary: ['ohp'], hyp: [
       ['풀업 / 랫풀다운', 4, '8-10'], ['바벨 로우', 3, '8'], ['시티드 케이블 로우', 3, '10-12'], ['페이스 풀', 3, '15'],
       ['바벨 컬', 3, '10'], ['해머 컬', 3, '12'], ['오버헤드 트라이셉스 익스텐션', 3, '12'], ['딥스 / 클로즈그립 벤치', 3, '10'],
     ],
@@ -215,7 +215,7 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
       for (const lift of rotation.secondary || []) {
         const rx = prescribe(lift, { ...ctx, secondary: true });
         if (rx) {
-          items.push({ type: 'lift', lift, kind: 'variation', variation: true, title: `${rx.name} (벤치 2회차)`, detail: `${rx.sets}×${rx.reps}${rx.kg ? ` @ ${rx.kg}kg` : ''}`, kg: rx.kg, reps: rx.reps, rpe: 7, note: rx.cues.concat(rx.reasons).join(' / '), reasons: [] });
+          items.push({ type: 'lift', lift, kind: 'variation', variation: true, title: `${rx.name} (${LIFT_KO[lift]} 2회차)`, detail: `${rx.sets}×${rx.reps}${rx.kg ? ` @ ${rx.kg}kg` : ''}`, kg: rx.kg, reps: rx.reps, rpe: 7, note: rx.cues.concat(rx.reasons).join(' / '), reasons: [] });
           extraAcc.push(...rx.accessories);
         }
       }

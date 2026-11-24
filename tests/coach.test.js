@@ -93,7 +93,7 @@ test('피로 신호 2개 이상이면 디로드 권장', () => {
   assert.equal(fatigueSignals(st(), '2026-11-24').deload, false);
 });
 
-test('주간 프로그램(코칭): A일 스쿼트+OHP RPE 처방, C일 벤치 2회차, 디로드 주 러닝 감소', () => {
+test('주간 프로그램(코칭): A일 스쿼트+OHP RPE 처방, C일 오버헤드프레스 2회차, 디로드 주 러닝 감소', () => {
   const coach = { state: st(), runAcwr: null, hardRunOn: () => false };
   const w = buildWeek(settings, 0, null, coach);
   const a = w.days[0];
@@ -102,7 +102,9 @@ test('주간 프로그램(코칭): A일 스쿼트+OHP RPE 처방, C일 벤치 2�
   assert.ok(a.items.some((i) => i.lift === 'ohp'));
   const c = w.days[2];
   assert.equal(c.rotation.key, 'C');
-  assert.ok(c.items.some((i) => i.lift === 'bench' && i.variation));
+  const ohp2 = c.items.find((i) => i.lift === 'ohp' && i.variation);
+  assert.ok(ohp2 && /오버헤드 프레스 2회차/.test(ohp2.title), JSON.stringify(c.items.map((i) => i.title)));
+  assert.ok(!c.items.some((i) => i.lift === 'bench'), 'C일에 벤치 없음');
   const dl = buildWeek(settings, 7, null, coach);
   assert.ok(dl.weeklyKm < w.weeklyKm);
   assert.match(dl.wave.name, /디로드/);
@@ -154,5 +156,18 @@ test('데드리프트는 전용 저반복 체계: 축적기에도 세트당 5회
     assert.ok(dl.reps <= 5 && (dl.backoff?.reps ?? 0) <= 5 && (dl.backoff?.sets ?? 0) <= 3, `w${w} ${JSON.stringify([dl.reps, dl.backoff])}`);
     const tot = (r) => r.reps + (r.backoff?.sets || 0) * (r.backoff?.reps || 0);
     if (!phase.deload) assert.ok(tot(dl) < tot(sq), `w${w} dl ${tot(dl)} sq ${tot(sq)}`);
+  }
+});
+
+test('오버헤드프레스는 탑세트를 더 무겁게 (같은 주차 스쿼트보다 1RM 대비 강도·RPE가 높거나 같음)', async () => {
+  const { prescribe, phaseAt } = await import('../js/coach.js');
+  const state = { formLogs: [], coach: {} };
+  for (const w of [0, 3, 5]) {
+    const phase = phaseAt(w, {});
+    const ctx = { state, settings, phase, date: '2026-12-01' };
+    const o = prescribe('ohp', ctx);
+    const q = prescribe('squat', ctx);
+    assert.ok(o.rpe >= q.rpe && o.reps <= q.reps, `w${w} ohp ${o.reps}@${o.rpe} sq ${q.reps}@${q.rpe}`);
+    assert.ok(o.kg / settings.ohp1rm >= q.kg / settings.squat1rm - 0.02, `w${w} ${o.kg} ${q.kg}`);
   }
 });

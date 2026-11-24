@@ -38,6 +38,13 @@ export const LIFT_SCHEME = {
     real: { reps: [2], back: [1], backReps: [2] },
     deload: { reps: [3], back: [1], backReps: [3] },
   },
+  // 오버헤드프레스: 작은 근육군이라 고반복·낮은 RPE로는 자극이 부족 → 탑세트를 무겁게(RPE 8~9),
+  // 볼륨은 백오프와 등+팔 날의 2회차(주 2회)로 확보. 백오프 감량도 작게(5%)
+  ohp: {
+    acc: { reps: [5, 5, 4], rpe: [8, 8, 8.5], back: [3, 3, 3], backReps: [6, 6, 5], drop: 0.05 },
+    int: { reps: [3, 3, 2], rpe: [8.5, 8.5, 9], back: [3, 3, 2], backReps: [4, 3, 3], drop: 0.05 },
+    real: { reps: [2], rpe: [9], back: [2], backReps: [3], drop: 0.07 },
+  },
 };
 const LIFT_CAP = { deadlift: { reps: 5, backReps: 5, backSets: 3 } };
 
@@ -172,7 +179,11 @@ const PAIN_SWAP = {
 };
 
 // 기본 보조 변형 (결함이 없을 때, 등+팔 날 벤치 2회차)
-const DEFAULT_SECONDARY = { bench: ['퍼즈 벤치 (가슴 1초)', 3, 5, 0.7] };
+// 등+팔 날 2회차 기본 처방 (약점 변형이 없을 때): [이름, 세트, 반복, e1RM 대비, 이유]
+const DEFAULT_SECONDARY = {
+  ohp: ['오버헤드 프레스 (볼륨)', 4, 6, 0.75, '오버헤드프레스 주 2회: 무거운 날 + 볼륨 날'],
+  bench: ['퍼즈 벤치 (가슴 1초)', 3, 5, 0.7, '벤치 빈도 확보 (주 2회 이상)'],
+};
 
 function pickFix(lift, flags) {
   if (!flags) return null;
@@ -275,10 +286,10 @@ export function prescribe(lift, ctx) {
   const sch = LIFT_SCHEME[lift]?.[phase.key];
   const at = (arr) => arr[Math.min(wi, arr.length - 1)];
   let reps = at(sch?.reps || phase.reps);
-  let rpe = phase.rpe[wi];
+  let rpe = at(sch?.rpe || phase.rpe);
   let backSets = at(sch?.back || phase.back);
   let backReps = at(sch?.backReps || phase.backReps);
-  let drop = phase.drop;
+  let drop = sch?.drop ?? phase.drop;
   let name = LIFT_KO[lift];
 
   const prev = logs.filter((l) => l.lift === lift && l.date < date && !l.variation).sort((a, b) => b.date.localeCompare(a.date))[0];
@@ -368,11 +379,11 @@ export function prescribe(lift, ctx) {
   }
 
   if (ctx.secondary) {
-    // 등+팔 날의 2회차: 약점 변형이 있으면 그것, 없으면 기본 보조 변형
+    // 등+팔 날의 2회차: 약점 변형이 있으면 그것, 없으면 기본 볼륨 처방
     const base = DEFAULT_SECONDARY[lift];
-    const v = variation || (base ? { name: base[0], sets: base[1], reps: base[2], kg: round25(e1rm * base[3]), why: '벤치 빈도 확보 (주 2회 이상)' } : null);
+    const v = variation || (base ? { name: base[0], sets: base[1], reps: base[2], kg: round25(e1rm * base[3]), why: base[4] } : null);
     if (!v) return null;
-    if (phase.deload) v.sets = Math.max(1, v.sets - 1);
+    if (phase.deload) { v.sets = Math.max(1, v.sets - 1); if (v.kg) v.kg = round25(v.kg * 0.88); }
     return { lift, secondary: true, name: v.name, sets: v.sets, reps: v.reps, kg: v.kg, rpe: 7, e1rm, e1Source: source, reasons: [v.why], cues, accessories };
   }
 
