@@ -205,3 +205,9 @@ ul.small { font-size: 0.85rem; padding-left: 18px; }
 .cat { margin: 6px 0; }
 .cat-h { font-size: 0.78rem; font-weight: 700; color: var(--muted); margin-top: 6px; }
 .cat-rule .cat-h { color: var(--bad); }
+.playback { margin: 8px 0; max-width: 480px; }
+.playback .pb-main { flex-wrap: nowrap; }
+.playback .pb-main input[type=range] { flex: 1; min-width: 80px; padding: 0; }
+.playback button { padding: 6px 10px; font-size: 0.85rem; }
+.playback button.on { background: var(--primary); color: var(--primary-text); border-color: transparent; }
+.playback .pb-sub { margin-top: 6px; gap: 6px; font-size: 0.85rem; }

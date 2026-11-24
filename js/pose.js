@@ -141,50 +141,122 @@ function backFromMask(mask, pose) {
 
 const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [29, 31], [27, 31], [28, 30], [30, 32], [28, 32]];
 
-// 핵심 프레임에 골격 + 바벨 궤적 그리기
+// 분석된 프레임(초당 15장) 사이 시각의 관절 위치를 선형 보간
+export function interpFrame(frames, t) {
+  if (!frames?.length) return null;
+  let lo = 0;
+  let hi = frames.length - 1;
+  if (t <= frames[0].t) return frames[0];
+  if (t >= frames[hi].t) return frames[hi];
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (frames[mid].t <= t) lo = mid; else hi = mid;
+  }
+  const a = frames[lo];
+  const b = frames[hi];
+  const k = (t - a.t) / (b.t - a.t || 1);
+  if (b.t - a.t > 0.5) return k < 0.5 ? a : b; // 인식이 끊긴 구간은 보간하지 않음
+  return {
+    t,
+    lm: a.lm.map((p, i) => ({ x: p.x + (b.lm[i].x - p.x) * k, y: p.y + (b.lm[i].y - p.y) * k, visibility: Math.min(p.visibility ?? 1, b.lm[i].visibility ?? 1) })),
+  };
+}
+
+function jointAngle(a, b, c) {
+  const v1 = [a.x - b.x, a.y - b.y];
+  const v2 = [c.x - b.x, c.y - b.y];
+  const d = Math.hypot(...v1) * Math.hypot(...v2);
+  return d ? (Math.acos(Math.max(-1, Math.min(1, (v1[0] * v2[0] + v1[1] * v2[1]) / d))) * 180) / Math.PI : NaN;
+}
+
+/**
+ * 캔버스에 골격 + 바벨 궤적 + 회차 표시 (탐색 없이 즉시)
+ * @param opts { barPath, label, angles: true면 잘 보이는 쪽 무릎각·상체각 표시 }
+ */
+export function drawOverlay(canvas, video, frame, opts = {}) {
+  if (!frame) return;
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
+  const W = canvas.width;
+  const H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const P = (i) => ({ x: frame.lm[i].x * W, y: frame.lm[i].y * H, v: frame.lm[i].visibility ?? 1 });
+  const w = Math.max(3, W / 150);
+  ctx.lineCap = 'round';
+  for (const [a, b] of BONES) {
+    const pa = P(a);
+    const pb = P(b);
+    if (pa.v < 0.3 || pb.v < 0.3) continue;
+    ctx.globalAlpha = Math.min(pa.v, pb.v) < 0.5 ? 0.35 : 0.95; // 가려진 관절은 흐리게
+    ctx.lineWidth = w;
+    ctx.strokeStyle = a % 2 === 1 && b % 2 === 1 ? '#22d3ee' : a % 2 === 0 && b % 2 === 0 ? '#f472b6' : '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(pa.x, pa.y);
+    ctx.lineTo(pb.x, pb.y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  for (const i of [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) {
+    const q = P(i);
+    if (q.v < 0.3) continue;
+    ctx.fillStyle = q.v < 0.5 ? 'rgba(255,255,255,0.4)' : '#ffffff';
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, w * 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 바벨 궤적: 전체는 흐리게, 현재 위치 강조 (정규화 좌표: 영상 높이 기준)
+  const bp = opts.barPath;
+  if (bp?.length) {
+    ctx.lineWidth = w * 0.7;
+    ctx.strokeStyle = 'rgba(250,204,21,0.45)';
+    ctx.beginPath();
+    bp.forEach((b, i) => { const x = b.x * H; const y = b.y * H; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+    ctx.stroke();
+    const recent = bp.filter((b) => b.t <= frame.t && b.t >= frame.t - 1);
+    if (recent.length > 1) {
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      recent.forEach((b, i) => { const x = b.x * H; const y = b.y * H; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+    const cur = bp.reduce((a, b) => (Math.abs(b.t - frame.t) < Math.abs(a.t - frame.t) ? b : a), bp[0]);
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.arc(cur.x * H, cur.y * H, w * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 잘 보이는 쪽 무릎각·고관절각
+  const font = Math.round(W / 26);
+  const tag = (txt, x, y) => {
+    ctx.font = `bold ${font}px sans-serif`;
+    const tw = ctx.measureText(txt).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(x + w * 2, y - font, tw + font * 0.5, font * 1.3);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, x + w * 2 + font * 0.25, y);
+  };
+  if (opts.angles) {
+    const side = P(23).v + P(25).v >= P(24).v + P(26).v ? [11, 23, 25, 27] : [12, 24, 26, 28];
+    const [sh, hp, kn, an] = side.map(P);
+    if (Math.min(hp.v, kn.v, an.v) > 0.5) tag(`무릎 ${Math.round(jointAngle(hp, kn, an))}°`, kn.x, kn.y);
+    if (Math.min(sh.v, hp.v, kn.v) > 0.5) tag(`고관절 ${Math.round(jointAngle(sh, hp, kn))}°`, hp.x, hp.y);
+  }
+  if (opts.label) {
+    ctx.font = `bold ${Math.round(W / 20)}px sans-serif`;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, W / 13);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(opts.label, W / 40, W / 18);
+  }
+}
+
+// 핵심 프레임으로 이동해 그리기
 export async function drawKeyFrame(video, canvas, frame, label, barPath = null) {
   if (!frame) return;
   await seek(video, frame.t);
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const X = (p) => p.x * canvas.width;
-  const Y = (p) => p.y * canvas.height;
-  const w = Math.max(3, canvas.width / 150);
-  ctx.lineWidth = w;
-  for (const [a, b] of BONES) {
-    const pa = frame.lm[a];
-    const pb = frame.lm[b];
-    if ((pa.visibility ?? 1) < 0.3 || (pb.visibility ?? 1) < 0.3) continue;
-    ctx.strokeStyle = a % 2 === 1 && b % 2 === 1 ? '#22d3ee' : a % 2 === 0 && b % 2 === 0 ? '#f472b6' : '#e2e8f0';
-    ctx.beginPath();
-    ctx.moveTo(X(pa), Y(pa));
-    ctx.lineTo(X(pb), Y(pb));
-    ctx.stroke();
-  }
-  // 바벨 궤적 (정규화 좌표: 영상 높이 기준)
-  if (barPath?.length) {
-    ctx.strokeStyle = '#facc15';
-    ctx.lineWidth = w * 0.8;
-    ctx.beginPath();
-    barPath.forEach((b, i) => {
-      const x = b.x * canvas.height;
-      const y = b.y * canvas.height;
-      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
-    });
-    ctx.stroke();
-    const cur = barPath.reduce((a, b) => (Math.abs(b.t - frame.t) < Math.abs(a.t - frame.t) ? b : a), barPath[0]);
-    ctx.fillStyle = '#facc15';
-    ctx.beginPath();
-    ctx.arc(cur.x * canvas.height, cur.y * canvas.height, w * 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (label) {
-    ctx.font = `${Math.round(canvas.width / 22)}px sans-serif`;
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(0, 0, canvas.width, canvas.width / 14);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, canvas.width / 40, canvas.width / 19);
-  }
+  drawOverlay(canvas, video, frame, { label, barPath, angles: true });
 }

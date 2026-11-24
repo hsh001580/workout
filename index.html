@@ -89,6 +89,17 @@
           <video id="formVideoEl" playsinline muted></video>
           <canvas id="formCanvas"></canvas>
         </div>
+        <div id="playbackBar" class="playback hidden">
+          <div class="row pb-main">
+            <button id="pbPlay">▶ 재생</button>
+            <input type="range" id="pbSeek" min="0" max="1000" value="0" aria-label="재생 위치" />
+            <span id="pbTime" class="muted">0.0s</span>
+          </div>
+          <div class="row pb-sub"><span class="muted">속도</span>
+            <button data-rate="0.25">0.25×</button><button data-rate="0.5" class="on">0.5×</button><button data-rate="1">1×</button>
+            <span class="muted">회차</span><span id="pbReps" class="row"></span>
+          </div>
+        </div>
         <div id="formProgress" class="progress hidden"><div></div><span></span></div>
 
         <label class="inline"><input type="checkbox" id="formVariation" /> 변형 운동 세트입니다 (추정 1RM 계산에서 제외)</label>

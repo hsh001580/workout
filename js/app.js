@@ -218,6 +218,7 @@ function drawPlateMarks() {
   $('#plateState').textContent = plate ? `✓ 원판 지정됨 (반지름 ${Math.round(plate.rPx)}px)` : plateClicks.length ? '② 원판 위쪽 가장자리를 탭하세요' : '① 원판 중심을 탭하세요';
 }
 function resetPlate() {
+  stopPlayback(); // 원판 지정 표시를 덮어쓰지 않도록
   plate = null;
   plateClicks = [];
   $('#videoWrap').classList.add('picking');
@@ -243,6 +244,8 @@ $('#formCanvas').addEventListener('click', (e) => {
 
 $('#formVideo').addEventListener('change', async (e) => {
   videoFile = e.target.files[0] || null;
+  stopPlayback();
+  lastExtract = null;
   plate = null;
   plateClicks = [];
   if (!videoFile) { $('#videoWrap').classList.add('hidden'); $('#plateStep').classList.add('hidden'); return; }
@@ -291,6 +294,71 @@ function runVideoEval(win) {
     expectedReps: Number($('#formReps').value) || 0, window: win, style: state.settings.liftStyle || {}, purpose: state.settings.evalPurpose || 'longevity',
   });
 }
+
+// ---------- 분석 결과 재생: 영상 위에 골격·바벨 궤적·회차를 실시간으로 겹쳐 보기 ----------
+let playback = null;
+let pbRaf = 0;
+let poseMod = null;
+
+async function startPlayback(result) {
+  if (!lastExtract) return;
+  poseMod = poseMod || await import('./pose.js');
+  const v = $('#formVideoEl');
+  playback = {
+    frames: lastExtract.frames,
+    bar: result?.barResult?.series || null,
+    reps: result?.ok ? result.reps : [],
+    lift: lastExtract.lift,
+    angles: lastExtract.view === 'side',
+  };
+  v.playbackRate = Number(document.querySelector('#playbackBar [data-rate].on')?.dataset.rate || 0.5);
+  $('#playbackBar').classList.remove('hidden');
+  $('#pbReps').innerHTML = playback.reps.map((r) => `<button data-jump="${r.ecc?.[0] ?? r.conc?.[0] ?? 0}">${r.rulePass === false ? '🔴' : ''}${r.rep}</button>`).join('');
+  $('#pbReps').querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => { v.currentTime = Math.max(0, Number(b.dataset.jump) - 0.3); }));
+  cancelAnimationFrame(pbRaf);
+  const loop = () => { drawPlayback(); pbRaf = requestAnimationFrame(loop); };
+  loop();
+}
+
+function stopPlayback() {
+  cancelAnimationFrame(pbRaf);
+  playback = null;
+  $('#playbackBar').classList.add('hidden');
+  const v = $('#formVideoEl');
+  if (!v.paused) v.pause();
+}
+
+function drawPlayback() {
+  if (!playback || !poseMod) return;
+  const v = $('#formVideoEl');
+  const t = v.currentTime;
+  const f = poseMod.interpFrame(playback.frames, t);
+  const rep = playback.reps.find((r) => {
+    const a = r.ecc?.[0] ?? r.conc?.[0];
+    const b = r.conc?.[1] ?? r.ecc?.[1];
+    return a != null && b != null && t >= a && t <= b;
+  });
+  const phase = rep ? (rep.conc && t >= rep.conc[0] ? (playback.lift === 'deadlift' ? '당기기' : '상승') : '하강') : '';
+  const label = rep ? `${rep.rep}회차 · ${phase}${rep.mcv ? ` · ${rep.mcv.toFixed(2)}m/s` : ''}` : '';
+  poseMod.drawOverlay($('#formCanvas'), v, f, { barPath: playback.bar, label, angles: playback.angles });
+  const dur = v.duration || 1;
+  if (document.activeElement !== $('#pbSeek')) $('#pbSeek').value = String(Math.round((t / dur) * 1000));
+  $('#pbTime').textContent = `${t.toFixed(1)}s / ${dur.toFixed(1)}s`;
+  $('#pbPlay').textContent = v.paused ? '▶ 재생' : '⏸ 정지';
+}
+
+$('#pbPlay').addEventListener('click', () => {
+  const v = $('#formVideoEl');
+  if (v.paused) { if (v.ended || v.currentTime >= v.duration - 0.05) v.currentTime = 0; v.play().catch(() => {}); } else v.pause();
+});
+$('#pbSeek').addEventListener('input', (e) => {
+  const v = $('#formVideoEl');
+  v.currentTime = (Number(e.target.value) / 1000) * (v.duration || 0);
+});
+document.querySelectorAll('#playbackBar [data-rate]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('#playbackBar [data-rate]').forEach((x) => x.classList.toggle('on', x === b));
+  $('#formVideoEl').playbackRate = Number(b.dataset.rate);
+}));
 
 async function drawWorst(video) {
   if (!video?.ok || !lastExtract) return;
@@ -349,6 +417,7 @@ function bindTimeline(video, c) {
     if (!(t1 > t0)) { alert('끝 시점이 시작보다 뒤여야 합니다.'); return; }
     const v = runVideoEval({ t0, t1 });
     await drawWorst(v);
+    await startPlayback(v);
     finishEval(v, c);
   });
 }
@@ -375,6 +444,7 @@ $('#formAnalyze').addEventListener('click', async () => {
       lastExtract = { frames, bar, aspect, scale, lift, view };
       video = runVideoEval(null);
       await drawWorst(video);
+      await startPlayback(video);
     } catch (err) {
       video = { ok: false, error: `영상 분석 실패: ${err.message}. 인터넷 연결을 확인하거나 체크리스트로만 평가하세요.` };
     } finally {
