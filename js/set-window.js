@@ -1,0 +1,111 @@
+// 언랙·워크아웃·랙·손 놓기 같은 준비 구간을 자동으로 찾아 분석 구간에서 제외
+//
+// 분석 구간 = (1) 발이 고정되어 있고 (2) 바를 쥔 자세인 프레임이 이어진 구간 중 움직임이 가장 많은 구간
+//  - 발 고정: 발목 속도 < 0.25 다리길이/초 (걷기 = 워크아웃/워크인 제외)
+//  - 바를 쥔 자세 (종목별):
+//      OHP    손목이 어깨보다 팔 길이의 0.35배 이상 내려가지 않음 (랙에 건 뒤 팔 내림 제외)
+//      스쿼트  손목이 어깨 근처 (바를 등에 멘 상태)
+//      벤치   손목이 어깨보다 위 + 바가 얼굴 쪽으로 많이 넘어가지 않음 (랙 위치 제외)
+//      데드   항상 (랙 없음, 걷기만 제외)
+
+const IDS = { nose: [0], shoulder: [11, 12], elbow: [13, 14], wrist: [15, 16], hip: [23, 24], knee: [25, 26], ankle: [27, 28] };
+const FOOT_SPEED = 0.25; // 다리 길이/초
+const GAP_FILL = 0.4; // 초: 이보다 짧은 끊김은 이어 붙임
+const MIN_SEG = 1.0; // 초: 이보다 짧은 구간은 버림
+const PAD = 0.25; // 초: 구간 앞뒤 여유
+
+const median = (a) => { const b = a.filter(Number.isFinite).sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : NaN; };
+
+function point(f, name, aspect, minVis = 0.3) {
+  const ps = IDS[name].map((i) => f.lm[i]).filter((p) => p && (p.visibility ?? 1) >= minVis);
+  if (!ps.length) return null;
+  return { x: (ps.reduce((a, p) => a + p.x, 0) / ps.length) * aspect, y: ps.reduce((a, p) => a + p.y, 0) / ps.length };
+}
+
+const d = (a, b) => (a && b ? Math.hypot(a.x - b.x, a.y - b.y) : NaN);
+
+function toSegments(times, flags) {
+  const segs = [];
+  let start = null;
+  flags.forEach((on, i) => {
+    if (on && start == null) start = i;
+    if ((!on || i === flags.length - 1) && start != null) {
+      const end = on ? i : i - 1;
+      segs.push([start, end]);
+      start = null;
+    }
+  });
+  // 짧은 끊김 메우기
+  const merged = [];
+  for (const s of segs) {
+    const last = merged[merged.length - 1];
+    if (last && times[s[0]] - times[last[1]] <= GAP_FILL) last[1] = s[1];
+    else merged.push([...s]);
+  }
+  return merged.filter(([a, b]) => times[b] - times[a] >= MIN_SEG);
+}
+
+/**
+ * @returns { t0, t1, excluded: [[a, b], ...], trimmed: boolean }
+ */
+export function findActiveWindow(frames, lift, aspect = 1) {
+  const fr = frames.filter((f) => f.lm);
+  const all = { t0: fr[0]?.t ?? 0, t1: fr[fr.length - 1]?.t ?? 0, excluded: [], trimmed: false };
+  if (fr.length < 10) return all;
+  const P = fr.map((f) => Object.fromEntries(Object.keys(IDS).map((k) => [k, point(f, k, aspect)])));
+  const times = fr.map((f) => f.t);
+  const leg = median(P.map((p) => d(p.hip, p.ankle)));
+  const arm = median(P.map((p) => d(p.shoulder, p.elbow) + d(p.elbow, p.wrist)));
+  if (!Number.isFinite(leg) || leg <= 0) return all;
+
+  // (1) 발 고정: ±0.2초 사이 발목 이동 속도 (각 발목 중 빠른 쪽)
+  const ankleSpeed = fr.map((f, i) => {
+    let j0 = i;
+    let j1 = i;
+    while (j0 > 0 && times[i] - times[j0 - 1] <= 0.2) j0--;
+    while (j1 < fr.length - 1 && times[j1 + 1] - times[i] <= 0.2) j1++;
+    const dt = times[j1] - times[j0];
+    if (dt <= 0) return 0;
+    return Math.max(...[27, 28].map((k) => {
+      const a = fr[j0].lm[k];
+      const b = fr[j1].lm[k];
+      if (!a || !b || (a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) return 0;
+      return Math.hypot((b.x - a.x) * aspect, b.y - a.y) / leg / dt;
+    }));
+  });
+  const still = ankleSpeed.map((v) => v < FOOT_SPEED);
+
+  // (2) 바를 쥔 자세
+  const headDir = Math.sign(median(P.map((p) => (p.nose && p.shoulder ? p.nose.x - p.shoulder.x : NaN)))) || 1;
+  const holding = P.map((p) => {
+    if (lift === 'deadlift' || !Number.isFinite(arm) || !p.wrist || !p.shoulder) return true;
+    const below = (p.wrist.y - p.shoulder.y) / arm; // +면 손목이 어깨보다 아래
+    if (lift === 'ohp') return below < 0.35;
+    if (lift === 'squat') return Math.abs(below) < 0.5;
+    // bench: 손목이 어깨보다 위, 바가 얼굴 쪽(랙 위치)으로 많이 넘어가지 않음
+    const overFace = ((p.wrist.x - p.shoulder.x) * headDir) / arm;
+    return below < -0.05 && overFace < 0.35;
+  });
+
+  const active = still.map((s, i) => s && holding[i]);
+  const segs = toSegments(times, active);
+  if (!segs.length) return all;
+
+  // 움직임(관절 높이 변화량 합)이 가장 큰 구간 = 실제 세트
+  const sig = P.map((p) => {
+    const a = lift === 'squat' ? p.hip : lift === 'deadlift' ? p.shoulder : p.wrist;
+    return a ? a.y / leg : NaN;
+  });
+  const activity = ([a, b]) => {
+    let s = 0;
+    for (let i = a + 1; i <= b; i++) if (Number.isFinite(sig[i]) && Number.isFinite(sig[i - 1])) s += Math.abs(sig[i] - sig[i - 1]);
+    return s;
+  };
+  const best = segs.reduce((x, y) => (activity(y) > activity(x) ? y : x));
+  const t0 = Math.max(all.t0, times[best[0]] - PAD);
+  const t1 = Math.min(all.t1, times[best[1]] + PAD);
+  const excluded = [];
+  if (t0 - all.t0 > 0.3) excluded.push([all.t0, t0]);
+  if (all.t1 - t1 > 0.3) excluded.push([t1, all.t1]);
+  return { t0, t1, excluded, trimmed: excluded.length > 0 };
+}
