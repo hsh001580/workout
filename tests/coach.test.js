@@ -29,7 +29,7 @@ test('기록 없으면 설정 1RM 기준으로 처방', () => {
   const rx = prescribe('squat', { state: st(), settings, phase: P0, date: '2026-11-23' });
   assert.equal(rx.reps, 6);
   assert.equal(rx.rpe, 7);
-  assert.equal(rx.kg, loadFor(140, 6, 7));
+  assert.equal(rx.kg, loadFor(140, 6, 7, 5)); // 기본 최소 원판 2.5kg → 5kg 단위
   assert.equal(rx.backoff.sets, 3);
 });
 
