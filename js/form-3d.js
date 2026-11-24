@@ -104,7 +104,8 @@ function rawMetrics(f) {
   const out = {};
   const ok = (s, ...names) => {
     if (f.near && s !== f.near && names.some((n) => n !== 'shoulder' && n !== 'hip')) return false; // 먼 쪽 팔다리 제외
-    return names.every((n) => (f['v' + s]?.[n] ?? 1) >= VIS);
+    // 끝부분 관절은 가려져도 0.5~0.7을 받는 경우가 많아 더 엄격하게
+    return names.every((n) => (f['v' + s]?.[n] ?? 1) >= (['elbow', 'wrist', 'ankle', 'heel', 'toe'].includes(n) ? 0.75 : VIS));
   };
   for (const [s, sign] of [['L', -1], ['R', 1]]) {
     const P = f[s];

@@ -78,10 +78,18 @@ export function findActiveWindow(frames, lift, aspect = 1) {
     const w = ankleSpeed.slice(Math.max(0, i - 2), i + 3).sort((a, b) => a - b);
     return w[Math.floor(w.length / 2)];
   });
-  const still = speedF.map((v) => v < FOOT_SPEED);
+  // 벤치는 누운 자세라 다리 길이가 화면에서 짧게 잡히고 발목이 원판·벤치에 가려 떨림이 커서
+  // 걷기 판정이 세트 중에도 켜짐 (실영상: 발목 신뢰도 0.7, 다리 길이 0.24 → 속도 0.3~0.7).
+  // 서 있는 동안은 손목이 어깨보다 아래라 '바를 쥔 자세' 검사만으로 걷는 구간이 빠지므로 생략
+  const still = lift === 'bench' ? speedF.map(() => true) : speedF.map((v) => v < FOOT_SPEED);
 
   // (2) 바를 쥔 자세
-  const headDir = Math.sign(median(P.map((p) => (p.nose && p.shoulder ? p.nose.x - p.shoulder.x : NaN)))) || 1;
+  // 머리 방향은 엉덩이 기준 (어깨 기준은 거리가 짧아 부호가 흔들림). 발·머리 쪽에서 몸통 방향으로 찍어
+  // 머리-엉덩이 수평 거리가 짧으면 바의 얼굴 쪽 위치를 판단할 수 없으므로 그 검사는 생략
+  const hx = median(P.map((p) => (p.nose && p.hip ? p.nose.x - p.hip.x : NaN)));
+  const hd = median(P.map((p) => (p.nose && p.hip ? Math.hypot(p.nose.x - p.hip.x, p.nose.y - p.hip.y) : NaN)));
+  const headDir = Math.sign(hx) || 1;
+  const canJudgeRack = Number.isFinite(hx) && Math.abs(hx) > 0.6 * hd;
   const holding = P.map((p) => {
     if (lift === 'deadlift' || !Number.isFinite(arm) || !p.wrist || !p.shoulder) return true;
     const below = (p.wrist.y - p.shoulder.y) / arm; // +면 손목이 어깨보다 아래
@@ -89,7 +97,7 @@ export function findActiveWindow(frames, lift, aspect = 1) {
     if (lift === 'squat') return Math.abs(below) < 0.5;
     // bench: 손목이 어깨보다 위, 바가 얼굴 쪽(랙 위치)으로 많이 넘어가지 않음
     const overFace = ((p.wrist.x - p.shoulder.x) * headDir) / arm;
-    return below < -0.05 && overFace < 0.35;
+    return below < -0.05 && (!canJudgeRack || overFace < 0.35);
   });
 
   const active = still.map((s, i) => s && holding[i]);

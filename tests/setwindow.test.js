@@ -108,6 +108,29 @@ test('벤치: 랙에서 바 빼기·다시 걸기·손 놓기 제외', () => {
   assert.ok(res.window.trimmed);
 });
 
+test('벤치: 신뢰도 낮은 발목 떨림(실영상)이 있어도 세트 구간·회차 유지', () => {
+  let k = 0;
+  const jitter = (lm) => {
+    k++;
+    const j = ((k * 7919) % 13) / 13 - 0.5; // 결정적 잡음
+    [27, 28].forEach((i) => { lm[i] = { ...lm[i], x: lm[i].x + 0.12 * j, y: lm[i].y - 0.1 * j, visibility: 0.72 }; });
+    return lm;
+  };
+  const frames = seq([
+    [1, () => jitter(benchBody(0.9, 1))],
+    [1, (p) => jitter(benchBody(1, 1 - p))],
+    [8, (p) => jitter(benchBody(1 - Math.sin(Math.PI * ((p * 4) % 1)) ** 2))], // 4회
+    [1, (p) => jitter(benchBody(1, p))],
+    [1.5, () => jitter(benchBody(0, 0, true))],
+  ]);
+  const w = findActiveWindow(frames, 'bench');
+  assert.ok(w.trimmed, "랙 위치·손 놓은 구간은 제외돼야 함");
+  assert.ok(w.t0 > 0.8 && w.t0 < 2.3 && w.t1 > 9.7 && w.t1 < 12, `window ${w.t0}-${w.t1}`);
+  const res = evaluateForm({ frames, lift: 'bench', view: 'side', expectedReps: 4 });
+  assert.ok(res.ok, res.error);
+  assert.equal(res.reps.length, 4);
+});
+
 test('준비 구간이 없는 영상은 자르지 않음', () => {
   const frames = seq([[8, (p) => body({ u: Math.sin(Math.PI * ((p * 3) % 1)) })]]);
   const w = findActiveWindow(frames, 'squat');

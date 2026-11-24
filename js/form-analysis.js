@@ -53,7 +53,7 @@ export function extract(frames, aspect = 1) {
     for (const [k, i] of Object.entries(ids)) {
       const lm = f.lm[i];
       if (!lm) continue;
-      p[k] = { x: lm.x * aspect, y: lm.y };
+      p[k] = { x: lm.x * aspect, y: lm.y, v: lm.visibility ?? 1 };
       vis += lm.visibility ?? 1;
       n++;
     }
@@ -76,15 +76,17 @@ function smooth(pts, w = 1) {
     for (const k of Object.keys(f.p)) {
       let x = 0;
       let y = 0;
+      let v = 0;
       let c = 0;
       for (let j = lo; j <= hi; j++) {
         const q = pts[j].p[k];
         if (!q) continue;
         x += q.x;
         y += q.y;
+        v += q.v ?? 1;
         c++;
       }
-      p[k] = { x: x / c, y: y / c };
+      p[k] = { x: x / c, y: y / c, v: v / c };
     }
     return { t: f.t, p };
   });
@@ -239,6 +241,12 @@ function feetShift(seg, ref, legLen) {
   return Math.max(...seg.map((f) => Math.max(Math.abs(f.p.ankle.x - ref.ankle.x), Math.abs(f.p.toe.x - ref.toe.x)))) / legLen;
 }
 
+// MediaPipe는 원판·몸에 가려진 관절에도 신뢰도를 0.5~0.7로 주고 위치를 추측한다 (실영상 확인).
+// 손목·팔꿈치·발목·발끝처럼 끝부분 관절은 0.75 이상일 때만 판정에 사용
+const REL = 0.75;
+const relAt = (f, ...keys) => keys.every((k) => (f.p[k]?.v ?? 1) >= REL);
+const relFrac = (seg, ...keys) => (seg.length ? seg.filter((f) => relAt(f, ...keys)).length / seg.length : 0);
+
 // 스쿼트 (IPF: 고관절 상단이 무릎 상단보다 아래, 상승 중 하강·발 이동은 실격)
 // 상체각은 바 위치(스타일)별 기준: 로우바는 원래 더 숙여짐
 function analyzeSquatRep(pts, prevTop, bottom, nextTop, n, T) {
@@ -267,7 +275,7 @@ function analyzeSquatRep(pts, prevTop, bottom, nextTop, n, T) {
   const hi = nextTop ?? Math.min(pts.length - 1, bottom + 30);
   const seg = pts.slice(lo, hi + 1);
   // 대각선은 먼 쪽 발 추정이 부정확해 발 이동 판정을 하지 않음
-  if (!T._oblique && feetShift(seg, pts[lo].p, leg) > 0.08) issues.push(issue('bad', '발 위치 이동 (실격): 반복 중 발을 고정', 'rule'));
+  if (!T._oblique && relFrac(seg, 'ankle', 'toe') >= 0.7 && feetShift(seg.filter((f) => relAt(f, 'ankle', 'toe')), pts[lo].p, leg) > 0.08) issues.push(issue('bad', '발 위치 이동 (실격): 반복 중 발을 고정', 'rule'));
 
   // 효율: 상체각(스타일별), 엉덩이 먼저 뜸, 바-미드풋
   if (lean > tb) issues.push(issue('warn', `상체가 ${styleKo} 기준보다 크게 숙여짐 (${lean.toFixed(0)}°): 바가 앞으로 쏠리기 쉬움, 등 상부로 바를 받치기`));
@@ -308,10 +316,17 @@ function analyzeBenchRep(pts, prevTop, bottom, nextTop, n, T) {
   const forearm = dist(p.elbow, p.wrist);
   const stack = Math.abs(p.wrist.x - p.elbow.x) / forearm;
   const issues = [];
-  const metrics = { elbow: +elbowBottom.toFixed(0) };
+  const metrics = {};
+  const thigh = dist(p.hip, p.knee) || torso;
+  // 하단에서 팔(어깨·팔꿈치·손목)이 보여야 팔 관련 판정 가능. 원판에 가려지면 추측 위치라 판정하지 않음
+  const armOK = relAt(pts[bottom], 'shoulder', 'elbow', 'wrist');
+  let touch = null;
+  if (!armOK) issues.push(issue('info', '하단에서 팔이 가려져(원판 등) 터치 위치·전완·팔꿈치 깊이·벌어짐을 판정하지 못함: 카메라를 가슴보다 높게 두고 원판이 어깨·팔을 가리지 않는 각도로'));
+  if (armOK) {
+  metrics.elbow = +elbowBottom.toFixed(0);
 
   // 터치 위치: 어깨(0) → 골반(1) 방향 몸통 길이 비율. 명치 부근 ≈ 0.15~0.5
-  const touch = ((p.wrist.x - p.shoulder.x) * -headDir) / torso;
+  touch = ((p.wrist.x - p.shoulder.x) * -headDir) / torso;
   metrics.touch = +touch.toFixed(2);
   if (touch < 0.08) issues.push(issue('warn', `터치 위치가 높음 (쇄골·목 쪽, ${touch.toFixed(2)}): 명치 부근으로 내리고 팔꿈치를 몸 쪽으로 살짝 모으기 (어깨 부담↑)`, 'risk'));
   else if (touch > 0.6) issues.push(issue('warn', `터치 위치가 낮음 (배 쪽, ${touch.toFixed(2)}): 가슴 아래쪽·명치에 터치`));
@@ -326,6 +341,7 @@ function analyzeBenchRep(pts, prevTop, bottom, nextTop, n, T) {
   if (elbowAbove > T.benchElbowAbove * 2) issues.push(issue('bad', '팔꿈치 깊이 미달 (실격 가능): 바를 가슴까지 완전히 내려 팔꿈치가 어깨 높이 이하로', 'rule'));
   else if (elbowAbove > T.benchElbowAbove) issues.push(issue('warn', '팔꿈치 깊이 경계: 팔꿈치가 어깨 높이보다 높을 수 있음 (2023 IPF 규정)', 'rule'));
   else issues.push(issue('good', '팔꿈치 깊이 규정 통과', 'rule'));
+  }
 
   // 하강 통제
   if (prevTop != null) {
@@ -349,7 +365,8 @@ function analyzeBenchRep(pts, prevTop, bottom, nextTop, n, T) {
   if (nextTop != null) {
     const t = pts[nextTop].p;
     const conc = pts.slice(bottom, nextTop + 1);
-    if (!T._oblique) {
+    const armTopOK = relAt(pts[nextTop], 'shoulder', 'elbow', 'wrist');
+    if (!T._oblique && armTopOK) {
       const lock = angle(t.shoulder, t.elbow, t.wrist);
       if (lock < T.benchLockout) issues.push(issue('warn', `락아웃 불완전 (${lock.toFixed(0)}°): 팔꿈치를 끝까지 펴기`, 'rule'));
       else issues.push(issue('good', '락아웃 완료', 'rule'));
@@ -357,20 +374,23 @@ function analyzeBenchRep(pts, prevTop, bottom, nextTop, n, T) {
     // J 경로: 하단 → 락아웃에서 바가 머리 쪽(어깨 위)으로 돌아와야 함
     const jBack = ((t.wrist.x - p.wrist.x) * headDir) / torso;
     const overShoulder = Math.abs(t.wrist.x - t.shoulder.x) / torso;
-    metrics.jBack = +jBack.toFixed(2);
-    if (jBack < 0.03 && touch > 0.15) issues.push(issue('warn', '바가 어깨 쪽으로 돌아오지 않고 올라감: 가슴에서 밀어낼 때 얼굴 방향으로 밀어 J 경로로 락아웃'));
-    if (overShoulder > 0.2) issues.push(issue('warn', `락아웃 위치가 어깨 위가 아님 (${(overShoulder * 100).toFixed(0)}% 벗어남): 바를 어깨 관절 위에서 마무리`));
+    if (armOK && armTopOK) metrics.jBack = +jBack.toFixed(2);
+    if (armOK && armTopOK && jBack < 0.03 && touch > 0.15) issues.push(issue('warn', '바가 어깨 쪽으로 돌아오지 않고 올라감: 가슴에서 밀어낼 때 얼굴 방향으로 밀어 J 경로로 락아웃'));
+    if (armTopOK && overShoulder > 0.2) issues.push(issue('warn', `락아웃 위치가 어깨 위가 아님 (${(overShoulder * 100).toFixed(0)}% 벗어남): 바를 어깨 관절 위에서 마무리`));
     // 셋업 유지: 엉덩이·어깨·발
-    const hipUp = Math.max(...conc.map((f) => (p.hip.y - f.p.hip.y) / torso));
+    // 엉덩이 들림은 허벅지 길이 기준 (몸통은 원판에 가리거나 짧게 보이기 쉬움)
+    const hipUp = Math.max(...conc.map((f) => (p.hip.y - f.p.hip.y) / thigh));
     const shoulderUp = Math.max(...conc.map((f) => (p.shoulder.y - f.p.shoulder.y) / torso));
-    const feet = feetShift(conc, p, torso); // 수평 이동만 (발볼-뒤꿈치 구르기는 2026 규정상 허용)
+    // 발: 수평 이동만 (발볼-뒤꿈치 구르기는 2026 규정상 허용), 발목·발끝이 잘 보이는 프레임만
+    const feetSeen = conc.filter((f) => relAt(f, 'ankle', 'toe'));
+    const feet = feetSeen.length >= conc.length * 0.7 ? feetShift(feetSeen, p, thigh) : 0;
     metrics.buttLift = Math.round(Math.max(0, hipUp) * 100);
     metrics.shoulderLift = Math.round(Math.max(0, shoulderUp) * 100);
-    if (hipUp > 0.08) issues.push(issue('bad', '엉덩이가 벤치에서 뜸 (대회 실격): 레그 드라이브는 발로 바닥을 머리 쪽으로 밀고 엉덩이는 붙인 채', 'rule'));
+    if (hipUp > 0.15) issues.push(issue('bad', '엉덩이가 벤치에서 뜸 (대회 실격): 레그 드라이브는 발로 바닥을 머리 쪽으로 밀고 엉덩이는 붙인 채', 'rule'));
     if (shoulderUp > 0.12) issues.push(issue('warn', '프레스 중 어깨가 들림 (견갑 풀림): 견갑을 뒤로·아래로 고정한 채 밀고, 락아웃에서 어깨를 내밀지 않기', 'rule'));
-    if (feet > 0.12) issues.push(issue('bad', '발을 옮김 (2026 IPF 실격): 앞뒤·옆으로 옮기지 말기, 발볼-뒤꿈치 구르기는 허용', 'rule'));
+    if (feet > 0.25) issues.push(issue('bad', '발을 옮김 (2026 IPF 실격): 앞뒤·옆으로 옮기지 말기, 발볼-뒤꿈치 구르기는 허용', 'rule'));
     // 규정: 프레스 시작 후 하강, 머리 들림
-    if (downwardIn(n, bottom, nextTop, T.downwardTol) > 0) issues.push(issue('bad', '프레스 중 하강 (실격): 밀기 시작한 뒤 바가 다시 내려가지 않게 끝까지 가속', 'rule'));
+    if (relFrac(conc, 'wrist') >= 0.7 && downwardIn(n, bottom, nextTop, T.downwardTol) > 0) issues.push(issue('bad', '프레스 중 하강 (실격): 밀기 시작한 뒤 바가 다시 내려가지 않게 끝까지 가속', 'rule'));
     if (p.nose && conc.every((f) => f.p.nose)) {
       const headUp = Math.max(...conc.map((f) => (p.nose.y - f.p.nose.y) / torso));
       if (headUp > 0.12) issues.push(issue('bad', '머리 들림 (실격): 뒤통수로 벤치를 누른 채 프레스', 'rule'));
@@ -453,13 +473,15 @@ function analyzeDeadliftRep(pts, start, top, n, T) {
   const issues = [];
   const metrics = { kneeStart: +kneeStart.toFixed(0), hipStart: +hipStart.toFixed(0) };
 
-  // 효율: 셋업
-  const barOff = Math.abs(s.wrist.x - midfoot(s)) / thigh;
+  // 효율: 셋업 (손목이 원판에 가려지면 바 위치 판정 생략)
+  const wristOK = relAt(pts[start], 'wrist');
+  if (!wristOK) issues.push(issue('info', '시작 자세에서 손(바)이 가려져 바-미드풋·어깨-바 위치를 판정하지 못함: 원판이 손을 가리지 않는 각도로 촬영'));
+  const barOff = wristOK ? Math.abs(s.wrist.x - midfoot(s)) / thigh : 0;
   if (barOff > 0.45) issues.push(issue('bad', '바가 미드풋에서 멀리 떨어진 채 시작: 바를 발 중앙 위에 두고 정강이에 붙이기'));
   else if (barOff > 0.3) issues.push(issue('warn', '바가 미드풋보다 앞에서 시작: 정강이 쪽으로 붙이기'));
   const shoulderAhead = ((s.shoulder.x - s.wrist.x) * facing) / thigh;
   metrics.shoulderAhead = +shoulderAhead.toFixed(2);
-  if (!sumo && shoulderAhead < -0.05) issues.push(issue('warn', '어깨가 바 뒤에 있는 채 시작: 바가 몸에서 멀어지기 쉬움, 어깨를 바 바로 위나 약간 앞에'));
+  if (wristOK && !sumo && shoulderAhead < -0.05) issues.push(issue('warn', '어깨가 바 뒤에 있는 채 시작: 바가 몸에서 멀어지기 쉬움, 어깨를 바 바로 위나 약간 앞에'));
   if (sumo && kneeStart > 150) issues.push(issue('warn', `스모인데 무릎이 거의 펴진 채 시작 (${kneeStart.toFixed(0)}°): 엉덩이를 바에 더 가깝게, 무릎을 바깥으로`));
   if (!sumo && kneeStart > 165) issues.push(issue('info', `무릎을 거의 편 채 시작 (${kneeStart.toFixed(0)}°): 의도한 스타일이 아니면 엉덩이를 조금 낮추기`));
 
@@ -476,13 +498,13 @@ function analyzeDeadliftRep(pts, start, top, n, T) {
   const kneePass = seg.reduce((a, f) => (Math.abs(f.p.wrist.y - f.p.knee.y) < Math.abs(a.p.wrist.y - a.p.knee.y) ? f : a), seg[0]);
   const gap = ((kneePass.p.wrist.x - kneePass.p.knee.x) * facing) / thigh;
   metrics.kneeGap = +gap.toFixed(2);
-  if (gap > 0.25) issues.push(issue('warn', '무릎 높이에서 바가 다리에서 멀어짐: 광배근으로 바를 몸에 붙이기'));
+  if (relAt(kneePass, 'wrist', 'knee') && gap > 0.25) issues.push(issue('warn', '무릎 높이에서 바가 다리에서 멀어짐: 광배근으로 바를 몸에 붙이기'));
   const path = (Math.max(...seg.map((f) => f.p.wrist.x)) - Math.min(...seg.map((f) => f.p.wrist.x))) / thigh;
-  if (path > 0.35) issues.push(issue('warn', '바가 앞뒤로 흔들림: 바를 수직으로 끌어올리기'));
+  if (relFrac(seg, 'wrist') >= 0.7 && path > 0.35) issues.push(issue('warn', '바가 앞뒤로 흔들림: 바를 수직으로 끌어올리기'));
 
   // 규정: 히칭·당기는 중 하강, 발 이동, 락아웃
   if (downwardIn(n, start, top, T.downwardTol) > 0) issues.push(issue('bad', '당기는 중 하강·히칭 (실격): 허벅지에 바를 얹거나 다시 내렸다 올리지 않고 한 번에 락아웃', 'rule'));
-  if (!T._oblique && feetShift(seg, s, leg) > 0.08) issues.push(issue('warn', '당기는 중 발 위치 이동: 발 고정', 'rule'));
+  if (!T._oblique && relFrac(seg, 'ankle', 'toe') >= 0.7 && feetShift(seg.filter((f) => relAt(f, 'ankle', 'toe')), s, leg) > 0.08) issues.push(issue('warn', '당기는 중 발 위치 이동: 발 고정', 'rule'));
   const hipTop = angle(t.shoulder, t.hip, t.knee);
   const kneeTop = angle(t.hip, t.knee, t.ankle);
   metrics.hipTop = +hipTop.toFixed(0);
