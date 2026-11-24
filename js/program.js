@@ -1,7 +1,7 @@
 // 4일 로테이션 웨이트 + 가민 기록 기반 러닝 주간 프로그램
 // 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔 + 벤치 2회차) → D(휴식) 반복
 // coach 컨텍스트가 있으면 코칭 엔진(coach.js)이 블록 단계·기록·자세·컨디션으로 처방을 만든다.
-import { phaseAt, prescribe, accessoryScale } from './coach.js';
+import { phaseAt, prescribe, accessoryScale, garminCheckin } from './coach.js';
 
 export const DAY_NAMES = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -204,7 +204,9 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
       const iso = isoOf(date);
       const prevDay = new Date(date);
       prevDay.setDate(date.getDate() - 1);
-      const ctx = { state: coach.state, settings, phase, date: iso, checkin: coach.state.checkins?.[iso], hardRunYesterday: coach.hardRunOn?.(isoOf(prevDay)) };
+      // 직접 기록한 컨디션 우선, 없으면 가민 회복 지표(수면·레디니스·바디 배터리)로 자동 산출
+      const checkin = coach.state.checkins?.[iso] || garminCheckin(coach.state.garmin?.data?.daily?.[iso]);
+      const ctx = { state: coach.state, settings, phase, date: iso, checkin, hardRunYesterday: coach.hardRunOn?.(isoOf(prevDay)) };
       for (const lift of rotation.lifts) {
         const rx = prescribe(lift, ctx);
         items.push(...rxItems(rx));
@@ -231,7 +233,7 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
       }
     }
     if (rotation.hyp.length || extraAcc.length) {
-      const f = coach ? accessoryScale(phase, coach.state.checkins?.[isoOf(date)], coach.runAcwr) : (wave.deload ? 0.67 : 1);
+      const f = coach ? accessoryScale(phase, coach.state.checkins?.[isoOf(date)] || garminCheckin(coach.state.garmin?.data?.daily?.[isoOf(date)]), coach.runAcwr) : (wave.deload ? 0.67 : 1);
       const list = rotation.hyp.map(([n, sets, r]) => `${n} ${Math.max(1, Math.round(sets * f))}×${r}`);
       const uniq = [...new Set(extraAcc)];
       items.push({

@@ -107,3 +107,38 @@ test('주간 프로그램(코칭): A일 스쿼트+OHP RPE 처방, C일 벤치 2�
   assert.ok(dl.weeklyKm < w.weeklyKm);
   assert.match(dl.wave.name, /디로드/);
 });
+
+import { garminCheckin, garminFatigue, readinessOf } from '../js/coach.js';
+
+test('가민 지표 → 자동 컨디션 (수면 점수·레디니스)', () => {
+  const good = garminCheckin({ sleepScore: 88, readiness: 80 });
+  assert.deepEqual([good.sleep, good.energy, good.soreness, good.source], [5, 5, 3, 'garmin']);
+  const bad = garminCheckin({ sleepScore: 45, readiness: 20 });
+  assert.ok(readinessOf(bad) < 2.5);
+  assert.equal(garminCheckin({ sleepHours: 7.5, bbHigh: 70 }).energy, 4); // 레디니스 없으면 바디 배터리
+  assert.equal(garminCheckin({ steps: 100 }), null);
+});
+
+test('가민 자동 컨디션이 처방에 반영됨', () => {
+  const s = st({ garmin: { data: { daily: { '2026-11-24': { sleepScore: 40, readiness: 15 } } } } });
+  const w = buildWeek(settings, 0, null, { state: s, runAcwr: null, hardRunOn: () => false });
+  const bench = w.days[1].items.find((i) => i.lift === 'bench' && !i.variation);
+  assert.ok(bench.reasons.some((r) => r.includes('컨디션')), JSON.stringify(bench.reasons));
+});
+
+test('가민 피로 신호: HRV 불균형, 레디니스 저하, 안정시 심박 상승, 트레이닝 상태', () => {
+  const daily = {};
+  for (let i = 1; i <= 30; i++) daily[`2026-10-${String(i).padStart(2, '0')}`] = { restingHr: 50 };
+  Object.assign(daily, {
+    '2026-11-20': { hrvStatus: 'UNBALANCED', restingHr: 50 },
+    '2026-11-21': { hrvStatus: 'LOW', readiness: 30, restingHr: 56 },
+    '2026-11-22': { hrvStatus: 'BALANCED', readiness: 20, restingHr: 57 },
+    '2026-11-23': { hrvStatus: 'LOW', readiness: 50, restingHr: 52 },
+    '2026-11-24': { hrvStatus: 'UNBALANCED', readiness: 25, restingHr: 56 },
+  });
+  const sig = garminFatigue(daily, { trainingStatus: 'OVERREACHING_1' }, '2026-11-24');
+  assert.equal(sig.length, 4, JSON.stringify(sig));
+  const f = fatigueSignals(st({ garmin: { data: { daily, profile: {} } } }), '2026-11-24');
+  assert.ok(f.deload);
+  assert.equal(garminFatigue({}, {}, '2026-11-24').length, 0);
+});

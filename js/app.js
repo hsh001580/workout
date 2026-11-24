@@ -7,17 +7,24 @@ import { estimate1RM } from './bar-analysis.js';
 import { evaluateRun, runStats, RUN_TYPES } from './run-analysis.js';
 import { fetchGarmin, toRunLog } from './garmin.js';
 import { importGarminFile, isSameRun } from './garmin-import.js';
-import { liftE1rm, fatigueSignals, phaseAt, prescribe, LIFT_KO } from './coach.js';
+import { liftE1rm, fatigueSignals, phaseAt, prescribe, LIFT_KO, garminCheckin, readinessOf } from './coach.js';
 
 const state = load();
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const scoreClass = (s) => (s >= 85 ? 's-good' : s >= 65 ? 's-warn' : 's-bad');
 const persist = () => save(state);
-const stats = (date = new Date()) => runStats(state.runLogs, date, state.garmin.vo2max);
+const gdata = () => state.garmin.data || { daily: {}, activities: [], profile: {} };
+const stats = (date = new Date()) => {
+  const s = runStats(state.runLogs, date, state.garmin.vo2max);
+  const p = gdata().profile;
+  // 가민 레이스 예측이 있으면 훈련 페이스 기준으로 사용 (VO2max 환산보다 개인화됨)
+  if (s && p?.racePredictions?.time5K) { s.fiveKSec = p.racePredictions.time5K; s.vo2Source = '가민 레이스 예측'; }
+  return s;
+};
 // 코칭 엔진 컨텍스트: 기록·자세·컨디션·러닝 부하로 처방을 만든다
 const hardRunOn = (iso) => state.runLogs.some((r) => r.date === iso && ((r.result?.zone ?? 0) >= 4 || (r.result?.load ?? 0) > 150));
-const coachCtx = () => ({ state, runAcwr: stats()?.acwr ?? null, hardRunOn });
+const coachCtx = () => ({ state, runAcwr: gdata().profile?.acwr ?? stats()?.acwr ?? null, hardRunOn });
 const fmtDate = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
 
 function fbList(items) {
@@ -70,7 +77,8 @@ function runBasisText(w) {
   const s = w.stats;
   if (!s) return `러닝 기준: 설정값 (주 ${state.settings.weeklyKm}km, 5K ${esc(state.settings.fiveK)}) · 가민 연동 시 자동 조정`;
   return `가민 기준: 최근 4주 평균 ${s.avg4}km · 지난주 ${s.lastWeek}km → 이번 주 ${w.weeklyKm}km`
-    + (s.vo2 ? ` · ${esc(s.vo2Source)} ${s.vo2.toFixed(1)} (5K 환산 ${fmtDuration(s.fiveKSec)})` : '')
+    + (s.vo2Source === '가민 레이스 예측' ? ` · 가민 5K 예측 ${fmtDuration(s.fiveKSec)} 기준 페이스${s.vo2 ? ` · VO2max ${s.vo2.toFixed(1)}` : ''}`
+      : s.vo2 ? ` · ${esc(s.vo2Source)} ${s.vo2.toFixed(1)} (5K 환산 ${fmtDuration(s.fiveKSec)})` : '')
     + (s.acwr && s.acwr > 1.3 ? ' · 최근 부하 급증으로 거리 동결' : '');
 }
 
@@ -120,7 +128,9 @@ function renderToday() {
     else todo += '<li class="warn">러닝 후 가민 파일을 가져오면 자동 평가되고 다음 주 러닝 계획에 반영됩니다. <button class="link" data-go="settings">가져오기 →</button></li>';
   }
 
-  const ck = state.checkins?.[today];
+  const manualCk = state.checkins?.[today];
+  const gToday = gdata().daily[today];
+  const ck = manualCk || garminCheckin(gToday);
   const sel = (name, label, hint) => `<label>${label} <select data-ck-field="${name}">${[1, 2, 3, 4, 5].map((v) => `<option value="${v}" ${(ck?.[name] ?? 3) == v ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="muted">${hint}</span></label>`;
   const fat = fatigueSignals(state, today, stats()?.acwr);
   const ready = ck ? ((Number(ck.sleep) + Number(ck.energy) + (6 - Number(ck.soreness))) / 3).toFixed(1) : null;
@@ -134,8 +144,8 @@ function renderToday() {
       <button id="saveCheckin">${ck ? '컨디션 수정' : '컨디션 기록'}</button>`;
   const fatigueHTML = fat.score ? `<ul class="fb">${fat.signals.map((x) => `<li class="warn">피로 신호: ${esc(x)}</li>`).join('')}${fat.deload ? '<li class="bad">피로가 누적되어 디로드가 자동 배치됩니다 (주간 프로그램 확인)</li>' : ''}</ul>` : '';
   const checkinCard = ck
-    ? `<details class="card"><summary><b>오늘 컨디션</b> 준비도 ${ready}/5 · 수면 ${ck.sleep} · 에너지 ${ck.energy} · 근육통 ${ck.soreness}${ck.pain ? ` · ${esc(ck.pain)} 통증` : ''} <span class="muted">(눌러서 수정)</span></summary>${checkinBody}</details>${fatigueHTML ? `<div class="card">${fatigueHTML}</div>` : ''}`
-    : `<div class="card"><h2>오늘 컨디션</h2><p class="muted">훈련 전에 기록하면 오늘 처방(강도·세트 수)이 자동 조정됩니다.</p>${checkinBody}${fatigueHTML}</div>`;
+    ? `<details class="card"><summary><b>오늘 컨디션</b>${ck.source === 'garmin' ? ' <span class="badge s-good">가민 자동</span>' : ''} 준비도 ${ready}/5 · 수면 ${ck.sleep} · 에너지 ${ck.energy} · 근육통 ${ck.soreness}${ck.pain ? ` · ${esc(ck.pain)} 통증` : ''} <span class="muted">(눌러서 ${ck.source === 'garmin' ? '근육통·통증 직접 입력' : '수정'})</span></summary>${checkinBody}</details>${garminCard(gToday)}${fatigueHTML ? `<div class="card">${fatigueHTML}</div>` : ''}`
+    : `<div class="card"><h2>오늘 컨디션</h2><p class="muted">훈련 전에 기록하면 오늘 처방(강도·세트 수)이 자동 조정됩니다. 가민 수면·레디니스가 동기화되면 자동으로 채워집니다.</p>${checkinBody}${fatigueHTML}</div>`;
   $('#tab-today').innerHTML = `
     ${ck ? '' : checkinCard}
     <div class="card">
@@ -511,6 +521,22 @@ $('#garminFiles').addEventListener('change', async (e) => {
 });
 
 // ---------- 다음 세션 설계 / 자동 디로드 ----------
+// 오늘 가민 회복 지표 카드
+const STATUS_KO = { BALANCED: '균형', UNBALANCED: '불균형', LOW: '낮음', POOR: '나쁨', HIGH: '높음', MODERATE: '보통', PRIME: '최상', GOOD: '좋음', FAIR: '보통', EXCELLENT: '최상' };
+function garminCard(day) {
+  if (!day) return '';
+  const st = (l, v) => (v == null ? '' : `<div class="stat"><div class="l">${l}</div><div class="v">${v}</div></div>`);
+  return `<div class="card"><h2>가민 회복 지표</h2><div class="stats">
+    ${st('수면', day.sleepScore != null ? `${day.sleepScore}점${day.sleepHours ? ` · ${day.sleepHours}h` : ''}` : day.sleepHours ? `${day.sleepHours}h` : null)}
+    ${st('HRV', day.hrv != null ? `${day.hrv}ms${day.hrvStatus ? ` · ${STATUS_KO[day.hrvStatus] || day.hrvStatus}` : ''}` : null)}
+    ${st('트레이닝 레디니스', day.readiness != null ? `${day.readiness}${day.readinessLevel ? ` · ${STATUS_KO[day.readinessLevel] || day.readinessLevel}` : ''}` : null)}
+    ${st('바디 배터리', day.bbHigh != null ? `${day.bbLow ?? '-'}~${day.bbHigh}` : null)}
+    ${st('안정시 심박', day.restingHr)}
+    ${st('스트레스', day.stressAvg)}
+    ${st('회복 필요', day.recoveryHours != null ? `${day.recoveryHours}h` : null)}
+  </div>${day.readinessFeedback ? `<p class="muted">${esc(day.readinessFeedback)}</p>` : ''}</div>`;
+}
+
 function nextSessionPreview(lift) {
   const d = new Date();
   for (let k = 1; k <= 10; k++) {
@@ -556,6 +582,8 @@ async function syncGarmin(manual = false) {
     g.lastSync = new Date().toISOString();
     g.updated = data.updated;
     if (data.vo2max) g.vo2max = data.vo2max;
+    g.data = { daily: data.daily || {}, activities: data.activities || [], profile: data.profile || {} };
+    if (g.data.profile.hrMax) state.settings.hrMax = g.data.profile.hrMax;
     if (data.restingHr) { g.restingHr = data.restingHr; state.settings.hrRest = data.restingHr; }
     const observedMax = Math.max(0, ...data.runs.map((r) => r.maxHr || 0));
     if (observedMax > state.settings.hrMax && observedMax < 225) state.settings.hrMax = observedMax;
@@ -602,6 +630,59 @@ function lineChart(labels, series, unit = '') {
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${grid}${xl}${lines}</svg>${legend}`;
 }
 
+const SPORT_KO = { strength_training: '근력 운동', cycling: '사이클', indoor_cycling: '실내 사이클', walking: '걷기', hiking: '하이킹', lap_swimming: '수영', open_water_swimming: '수영', yoga: '요가', hiit: 'HIIT', cardio: '유산소', elliptical: '일립티컬', indoor_rowing: '로잉', stair_climbing: '계단' };
+const STATUS_PHRASE = (p) => (p || '').replace(/_\d+$/, '').replace(/_/g, ' ').toLowerCase();
+
+function garminHistoryCard() {
+  const { daily, activities, profile: p } = gdata();
+  const dates = Object.keys(daily).sort().slice(-30);
+  if (!dates.length && !activities.length && !Object.keys(p).length) {
+    return '<div class="card"><h2>가민 데이터</h2><p class="muted">설정 탭에서 가민 자동 연동을 켜면 수면·HRV·레디니스·체성분·모든 활동이 여기에 표시됩니다.</p></div>';
+  }
+  const st = (l, v) => (v == null || v === '' ? '' : `<div class="stat"><div class="l">${l}</div><div class="v">${v}</div></div>`);
+  const rp = p.racePredictions || {};
+  const lastWeight = [...Object.keys(daily)].sort().reverse().map((d) => daily[d]).find((x) => x.weightKg);
+  const labels = dates.map((d) => d.slice(5));
+  const series = (k) => dates.map((d) => (daily[d][k] != null ? Number(daily[d][k]) : NaN));
+  const wDates = Object.keys(daily).sort().filter((d) => daily[d].weightKg).slice(-30);
+  const setsText = (sets) => {
+    const by = {};
+    for (const x of sets || []) { const k = (x.category || x.exercise || '').replace(/_/g, ' ').toLowerCase(); (by[k] = by[k] || []).push(`${x.reps ?? '-'}${x.kg ? `×${x.kg}kg` : ''}`); }
+    return Object.entries(by).map(([k, v]) => `${k}: ${v.join(', ')}`).join(' / ');
+  };
+  const recentActs = [...activities].sort((a, b) => (b.start || '').localeCompare(a.start || '')).slice(0, 15);
+  return `<div class="card"><h2>가민 데이터</h2>
+    <h3>능력·상태</h3><div class="stats">
+      ${st('VO2max', p.vo2max)}
+      ${st('트레이닝 상태', p.trainingStatus ? esc(STATUS_PHRASE(p.trainingStatus)) : null)}
+      ${st('급성/만성 부하', p.acuteLoad != null ? `${p.acuteLoad}/${p.chronicLoad ?? '-'}${p.acwr ? ` (${p.acwr})` : ''}` : null)}
+      ${st('5K 예측', rp.time5K ? fmtDuration(rp.time5K) : null)}
+      ${st('10K 예측', rp.time10K ? fmtDuration(rp.time10K) : null)}
+      ${st('하프 예측', rp.timeHalfMarathon ? fmtDuration(rp.timeHalfMarathon) : null)}
+      ${st('풀 예측', rp.timeMarathon ? fmtDuration(rp.timeMarathon) : null)}
+      ${st('젖산 역치', p.ltHr ? `${p.ltHr}bpm${p.ltPaceSec ? ` · ${fmtPace(p.ltPaceSec)}/km` : ''}` : null)}
+      ${st('지구력 점수', p.enduranceScore)}
+      ${st('언덕 점수', p.hillScore)}
+      ${st('피트니스 나이', p.fitnessAge != null ? `${Math.round(p.fitnessAge)}세${p.age ? ` (실제 ${p.age})` : ''}` : null)}
+      ${st('체중', lastWeight ? `${lastWeight.weightKg}kg${lastWeight.bodyFat ? ` · 체지방 ${lastWeight.bodyFat}%` : ''}` : null)}
+      ${(p.oneRepMax || []).filter((x) => x.kg).slice(0, 4).map((x) => st(`가민 1RM · ${esc(String(x.exercise).replace(/_/g, ' ').toLowerCase())}`, `${x.kg}kg`)).join('')}
+    </div>
+    ${dates.length ? `<h3>회복 (최근 30일)</h3>${lineChart(labels, [
+      { name: '수면 점수', color: 'var(--run)', values: series('sleepScore') },
+      { name: '트레이닝 레디니스', color: 'var(--lift)', values: series('readiness') },
+    ])}
+    ${lineChart(labels, [
+      { name: 'HRV (ms)', color: 'var(--hyp)', values: series('hrv') },
+      { name: '안정시 심박 (bpm)', color: 'var(--run)', values: series('restingHr') },
+    ])}` : ''}
+    ${wDates.length >= 2 ? `<h3>체중</h3>${lineChart(wDates.map((d) => d.slice(5)), [{ name: '체중', color: 'var(--lift)', values: wDates.map((d) => daily[d].weightKg) }], 'kg')}` : ''}
+    ${recentActs.length ? `<h3>러닝 외 활동</h3><div class="table-wrap"><table>
+      <tr><th>날짜</th><th>종류</th><th>시간</th><th>심박</th><th>세트</th></tr>
+      ${recentActs.map((a) => `<tr><td>${esc((a.date || '').slice(5))}</td><td>${esc(SPORT_KO[a.sport] || (a.sport || '').replace(/_/g, ' '))}</td><td>${a.durationSec ? fmtDuration(a.durationSec) : '-'}</td><td>${a.avgHr ?? '-'}</td><td class="muted">${esc(setsText(a.sets)) || '-'}</td></tr>`).join('')}
+    </table></div>` : ''}
+  </div>`;
+}
+
 let historyLift = 'squat';
 function renderHistory() {
   const forms = [...state.formLogs].sort((a, b) => b.date.localeCompare(a.date));
@@ -617,6 +698,7 @@ function renderHistory() {
       ${['squat', 'bench', 'deadlift', 'ohp'].map((l) => `<div class="stat"><div class="l">${LIFT_LABEL[l]} 최근 5회</div><div class="v">${avg(byLift(l))}</div></div>`).join('')}
       <div class="stat"><div class="l">러닝 최근 5회</div><div class="v">${avg(state.runLogs.slice(-5).map((r) => r.result.score))}</div></div>
     </div></div>
+    ${garminHistoryCard()}
     <div class="card">
       <div class="row between"><h2>종목별 추이</h2>
         <select id="historyLift">${['squat', 'bench', 'deadlift', 'ohp'].map((l) => `<option value="${l}" ${l === historyLift ? 'selected' : ''}>${LIFT_LABEL[l]}</option>`).join('')}</select></div>

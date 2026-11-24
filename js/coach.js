@@ -196,9 +196,17 @@ export function fatigueSignals(state, today, runAcwr = null) {
       if (last < best * 0.95 && daysBetween(ls[ls.length - 1].date, today) <= 10) sig.push(`${LIFT_KO[lift]} 추정 1RM ${Math.round((1 - last / best) * 100)}% 하락`);
     }
   }
-  const recent = Object.entries(state.checkins || {}).filter(([d]) => { const x = daysBetween(d, today); return x >= 0 && x <= 4; }).map(([, c]) => readinessOf(c));
+  const recent = [];
+  for (let i = 0; i <= 4; i++) {
+    const d = new Date(today + 'T12:00:00');
+    d.setDate(d.getDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    const c = state.checkins?.[iso] || garminCheckin(state.garmin?.data?.daily?.[iso]);
+    if (c) recent.push(readinessOf(c));
+  }
   if (recent.length >= 2 && recent.reduce((a, b) => a + b, 0) / recent.length <= 2.3) sig.push('최근 컨디션 평균이 낮음');
   if (runAcwr && runAcwr > 1.5) sig.push(`러닝 부하 급증 (ACWR ${runAcwr.toFixed(2)})`);
+  sig.push(...garminFatigue(state.garmin?.data?.daily, state.garmin?.data?.profile, today));
   return { score: sig.length, signals: sig, deload: sig.length >= 2 };
 }
 
@@ -314,4 +322,39 @@ export function accessoryScale(phase, checkin, runAcwr) {
   if (r != null && r < 3) f *= 0.75;
   if (runAcwr && runAcwr > 1.4) f *= 0.85;
   return f;
+}
+
+// ---------- 가민 회복 데이터 ----------
+const band = (v, cuts) => (v == null ? null : cuts.findIndex((c) => v < c) === -1 ? 5 : cuts.findIndex((c) => v < c) + 1);
+
+/** 가민 하루 지표 → 컨디션 체크인 (직접 기록이 없을 때 사용). 근육통은 측정 불가라 보통(3) */
+export function garminCheckin(day) {
+  if (!day) return null;
+  // 수면: 수면 점수 우선, 없으면 수면 시간
+  const sleep = day.sleepScore != null ? band(day.sleepScore, [50, 65, 75, 85]) : band(day.sleepHours, [5, 6, 7, 8]);
+  // 에너지: 트레이닝 레디니스 → 기상 바디 배터리 → 하루 최고 바디 배터리
+  let energy = null;
+  if (day.readiness != null) energy = band(day.readiness, [25, 45, 60, 75]);
+  else if (day.bbWake != null || day.bbHigh != null) energy = band(day.bbWake ?? day.bbHigh, [30, 50, 65, 80]);
+  if (sleep == null && energy == null) return null;
+  return { sleep: sleep ?? 3, energy: energy ?? 3, soreness: 3, pain: '', source: 'garmin' };
+}
+
+/** 가민 지표 기반 피로 신호 (최근 며칠) */
+export function garminFatigue(daily = {}, profile = {}, today) {
+  const sig = [];
+  const days = Object.keys(daily).filter((d) => d <= today).sort();
+  const last = (n) => days.slice(-n).map((d) => daily[d]);
+  const hrvBad = last(5).filter((x) => /LOW|UNBALANCED|POOR/i.test(x.hrvStatus || '')).length;
+  if (hrvBad >= 3) sig.push(`HRV 낮음·불균형 ${hrvBad}일 (최근 5일)`);
+  const lowReady = last(3).filter((x) => x.readiness != null && x.readiness < 35).length;
+  if (lowReady >= 2) sig.push(`가민 트레이닝 레디니스 낮음 ${lowReady}일 (최근 3일)`);
+  const base = days.slice(-33, -3).map((d) => daily[d].restingHr).filter(Number.isFinite).sort((a, b) => a - b);
+  if (base.length >= 10) {
+    const med = base[Math.floor(base.length / 2)];
+    const high = last(3).filter((x) => x.restingHr >= med + 5).length;
+    if (high >= 2) sig.push(`안정시 심박이 평소(${med})보다 5 이상 높음 ${high}일`);
+  }
+  if (/OVERREACHING|STRAINED|UNPRODUCTIVE/i.test(profile.trainingStatus || '')) sig.push(`가민 트레이닝 상태: ${profile.trainingStatus}`);
+  return sig;
 }
