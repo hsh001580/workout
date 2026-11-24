@@ -60,10 +60,12 @@ export function extract(frames, aspect = 1) {
     if (n === Object.keys(ids).length && vis / n > 0.5) {
       const nose = f.lm[0];
       if (nose && (nose.visibility ?? 1) > 0.6) p.nose = { x: nose.x * aspect, y: nose.y }; // 벤치 머리 들림 판정용 (선택)
-      out.push({ t: f.t, p });
+      out.push({ t: f.t, p, back: f.back || null });
     }
   }
-  return { side, pts: smooth(out) };
+  const sm = smooth(out);
+  sm.forEach((f, i) => { f.back = out[i].back; });
+  return { side, pts: sm };
 }
 
 function smooth(pts, w = 1) {
@@ -503,6 +505,42 @@ function analyzeDeadliftRep(pts, start, top, n, T) {
   };
 }
 
+// 척추 굽힘 (등 윤곽선, back-curve.js): 서 있는 자세 대비 하중 중 허리가 말리는 정도.
+// 실측 노이즈(프레임 간 ±1.3%)를 고려해 5프레임 중앙값 후 판정. 벤치는 해당 없음
+function spineFlex(pts, rep, baseLumbar, baseThor, lift, T) {
+  const out = [];
+  const metrics = {};
+  if (lift === 'bench' || baseLumbar == null || T._noSpine) return { issues: out, metrics };
+  const t0 = rep.ecc?.[0] ?? rep.conc?.[0];
+  const t1 = rep.conc?.[1] ?? rep.ecc?.[1];
+  if (t0 == null || t1 == null) return { issues: out, metrics };
+  const idx = pts.map((f, i) => i).filter((i) => pts[i].t >= t0 && pts[i].t <= t1);
+  const med = (k, i) => {
+    const v = pts.slice(Math.max(0, i - 2), i + 3).map((f) => f.back?.[k]).filter(Number.isFinite).sort((a, b) => a - b);
+    return v.length >= 3 ? v[Math.floor(v.length / 2)] : null;
+  };
+  const lum = idx.map((i) => med('lumbar', i)).filter(Number.isFinite);
+  if (lum.length < 3) return { issues: out, metrics };
+  const flex = Math.max(...lum) - baseLumbar; // + 말림
+  const ext = Math.min(...lum) - baseLumbar; // - 더 젖힘
+  metrics.lumbarFlex = Math.round(flex * 1000) / 10;
+  if (lift === 'ohp') {
+    if (-ext > T.lumbarExtWarn) out.push(issue('warn', `프레스 중 허리가 더 젖혀짐 (아치 +${(-ext * 100).toFixed(1)}%): 요추 과신전 부하, 둔근·복근으로 갈비뼈를 내리기`, 'risk'));
+  } else if (flex > T.lumbarFlexBad) out.push(issue('bad', `허리가 둥글게 말림 (서 있을 때 대비 +${(flex * 100).toFixed(1)}%): 하중을 받을 때 요추 굽힘은 디스크 부담이 큼. 무게를 낮추고 골반·복압 유지 가능한 범위로`, 'risk'));
+  else if (flex > T.lumbarFlexWarn) out.push(issue('warn', `허리가 조금 말림 (+${(flex * 100).toFixed(1)}%): 하단·초반에 골반이 말려 들어가지 않게`, 'risk'));
+  if (lift === 'deadlift' && baseThor != null) {
+    const th = idx.map((i) => med('thoracic', i)).filter(Number.isFinite);
+    if (th.length >= 3) {
+      const tf = Math.max(...th) - baseThor;
+      metrics.thoracicFlex = Math.round(tf * 1000) / 10;
+      if (tf > T.thoracicFlexInfo) out.push(issue('info', `등 상부가 둥글어짐 (+${(tf * 100).toFixed(1)}%): 최대 중량에서 흔한 전략, 허리가 함께 말리지 않으면 괜찮음`, 'risk'));
+    }
+  }
+  // 대각선 촬영은 등 윤곽이 실제 옆모습과 달라 참고 정보로만
+  if (T._oblique) out.forEach((i) => { i.level = 'info'; i.text += ' (대각선 촬영이라 참고용, 정측면에서 정확)'; });
+  return { issues: out, metrics };
+}
+
 // 브레이싱 근사 지표 (복압 자체는 영상으로 측정 불가)
 function bracing(pts, n, rep, refTrunk, lift, T, sagittal = true) {
   const out = [];
@@ -517,17 +555,6 @@ function bracing(pts, n, rep, refTrunk, lift, T, sagittal = true) {
   if (t0 == null || t1 == null) return { issues: out, metrics };
   const seg = pts.filter((f) => f.t >= t0 && f.t <= t1);
   if (seg.length < 3) return { issues: out, metrics };
-  // 2) 몸통 길이 감소: 척추가 굽거나 복압이 풀려 몸통이 접힘 (벤치는 아치, OHP는 어깨 으쓱 때문에 제외)
-  if (sagittal && (lift === 'squat' || lift === 'deadlift') && refTrunk) {
-    const minTrunk = Math.min(...seg.map((f) => dist(f.p.shoulder, f.p.hip)));
-    const shrink = ((refTrunk - minTrunk) / refTrunk) * 100;
-    metrics.trunkShrink = Math.max(0, Math.round(shrink));
-    if (shrink > T.trunkShrinkPct) {
-      out.push(lift === 'deadlift'
-        ? issue('info', `몸통 길이 ${shrink.toFixed(0)}% 짧아짐 (등 라운딩): 최대 중량에서 흔한 전략이지만 허리 통증이 있으면 줄이기`, 'risk')
-        : issue('warn', `몸통 길이 ${shrink.toFixed(0)}% 짧아짐: 등이 말리거나 복압이 풀린 신호. 하강 전 360° 복압, 갈비뼈 고정`));
-    }
-  }
   // 3) 상승 중 상체가 순간적으로 꺾임
   if (sagittal && rep.conc && lift !== 'bench') {
     const cs = pts.filter((f) => f.t >= rep.conc[0] && f.t <= rep.conc[1]);
@@ -544,7 +571,8 @@ function bracing(pts, n, rep, refTrunk, lift, T, sagittal = true) {
 }
 
 // 범주별 감점: 규정 위반이 가장 크고, 일관성은 작게
-const PENALTY = { rule: { bad: 25, warn: 10 }, eff: { bad: 12, warn: 6 }, risk: { bad: 15, warn: 7 }, cons: { bad: 8, warn: 5 } };
+// 지속 성장 관점: 부하 위험 > 피로 시 무너짐 > 효율 > 가동범위·통제 > 일관성 (대회 모드에서는 규정이 최우선)
+const PENALTY = { rule: { bad: 25, warn: 10 }, risk: { bad: 18, warn: 9 }, fatigue: { bad: 12, warn: 6 }, eff: { bad: 10, warn: 5 }, rom: { bad: 8, warn: 4 }, cons: { bad: 6, warn: 4 } };
 function scoreIssues(issues) {
   let s = 100;
   for (const i of issues) s -= PENALTY[i.cat || 'eff']?.[i.level] || 0;
@@ -572,16 +600,23 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
     return { ok: false, error: `반복 동작을 찾지 못했습니다. ${why}` };
   }
 
-  // 기준 몸통 길이: 상단(서 있는) 자세들의 중앙값
-  const tops = events.filter((e) => e.type === (lift === 'deadlift' ? 'top' : 'top')).map((e) => dist(pts[e.i].p.shoulder, pts[e.i].p.hip)).sort((a, b) => a - b);
-  const refTrunk = tops.length ? tops[Math.floor(tops.length / 2)] : null;
+  // 등 윤곽 기준값: 서 있는(상단) 자세 주변 프레임의 중앙값
+  const baseOf = (k) => {
+    const v = events.filter((e) => e.type === 'top').flatMap((e) => pts.slice(Math.max(0, e.i - 3), e.i + 4).map((f) => f.back?.[k])).filter(Number.isFinite).sort((a, b) => a - b);
+    return v.length >= 3 ? v[Math.floor(v.length / 2)] : null;
+  };
+  const baseLumbar = baseOf('lumbar');
+  const baseThor = baseOf('thoracic');
 
   reps.forEach((r, i) => {
     r.rep = i + 1;
     if (!sagittal) { r.issues = []; r.metrics = {}; }
-    const b = bracing(pts, n, r, sagittal ? refTrunk : null, lift, T, sagittal);
+    const b = bracing(pts, n, r, null, lift, T, sagittal);
     r.issues.push(...b.issues);
     Object.assign(r.metrics, b.metrics);
+    const sp = spineFlex(pts, r, baseLumbar, baseThor, lift, T);
+    r.issues.push(...sp.issues);
+    Object.assign(r.metrics, sp.metrics);
   });
 
   const summary = [];

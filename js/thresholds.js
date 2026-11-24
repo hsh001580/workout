@@ -38,7 +38,10 @@ export const THRESHOLD_META = {
   elbowFlareMax: { label: '벤치 팔꿈치 벌어짐 최대 (°)', group: '정면·3D' },
   lateralLeanWarn: { label: 'OHP 몸통 옆 기울기 경고 (°)', group: '정면·3D' },
   // 브레이싱
-  trunkShrinkPct: { label: '몸통 길이 감소 경고 (%)', group: '브레이싱' },
+  lumbarFlexWarn: { label: '허리 말림 경고 (서 있을 때 대비, 몸통 대비 비율)', group: '척추' },
+  lumbarFlexBad: { label: '허리 말림 감점', group: '척추' },
+  lumbarExtWarn: { label: 'OHP 허리 젖힘 증가 경고', group: '척추' },
+  thoracicFlexInfo: { label: '데드 등 상부 라운딩 표시', group: '척추' },
   rebraceSec: { label: '반복 사이 재브레이싱 최소 시간 (초)', group: '브레이싱' },
   torsoJerkDeg: { label: '상체 순간 무너짐 (°/0.2초)', group: '브레이싱' },
   kneeDipDeg: { label: 'OHP 무릎 반동 (시작 대비 굽힘 °)', group: '측면' },
@@ -81,7 +84,11 @@ const BASE = {
   barTiltCm: 3,
   elbowFlareMax: 80,
   lateralLeanWarn: 6,
-  trunkShrinkPct: 6,
+  // 등 윤곽 기반 척추 굽힘 (실측 프레임 노이즈 ±0.013, 5프레임 중앙값 후 ±0.006)
+  lumbarFlexWarn: 0.04, // 실측(대각선) 노이즈를 고려한 보수적 기준
+  lumbarFlexBad: 0.06,
+  lumbarExtWarn: 0.04,
+  thoracicFlexInfo: 0.05,
   rebraceSec: 0.4,
   kneeDipDeg: 10,
   torsoJerkDeg: 6,

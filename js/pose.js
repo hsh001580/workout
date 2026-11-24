@@ -1,5 +1,6 @@
 // MediaPipe Pose Landmarker로 영상 프레임별 관절 좌표(2D + 3D) 추출 + 원판 추적 (브라우저 내 처리)
 import { toGray, createTracker } from './bar-track.js';
+import { backCurve } from './back-curve.js';
 
 const VERSION = '0.10.14';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}`;
@@ -16,6 +17,7 @@ async function getLandmarker() {
         baseOptions: { modelAssetPath: MODEL, delegate },
         runningMode: 'VIDEO',
         numPoses: 1,
+        outputSegmentationMasks: true, // 등 윤곽선(척추 굽힘) 측정용
       });
       try {
         return await make('GPU');
@@ -91,8 +93,10 @@ export async function extractFrames(video, onProgress, { fps = 15, plate = null 
         t,
         lm: pose.map((p) => ({ x: p.x, y: p.y, z: p.z, visibility: p.visibility })),
         world: world ? world.map((p) => ({ x: p.x, y: p.y, z: p.z })) : null,
+        back: backFromMask(res.segmentationMasks?.[0], pose),
       });
     }
+    res.segmentationMasks?.forEach((m) => m.close?.());
     if (plate) {
       const g = grab();
       if (!tracker) {
@@ -107,6 +111,23 @@ export async function extractFrames(video, onProgress, { fps = 15, plate = null 
   }
   onProgress?.(1, '분석 완료');
   return { frames, bar };
+}
+
+// 실루엣 마스크에서 잘 보이는 쪽 엉덩이→어깨 기준 등 윤곽 굽힘
+function backFromMask(mask, pose) {
+  if (!mask) return null;
+  try {
+    const w = mask.width;
+    const h = mask.height;
+    const data = mask.getAsFloat32Array();
+    const side = (pose[11].visibility + pose[23].visibility) >= (pose[12].visibility + pose[24].visibility) ? [11, 23, 27, 31] : [12, 24, 28, 32];
+    const P = (i) => ({ x: pose[i].x * w, y: pose[i].y * h });
+    const facing = Math.sign(pose[side[3]].x - pose[side[2]].x) || 1;
+    const c = backCurve(data, w, h, P(side[1]), P(side[0]), facing);
+    return c ? { lumbar: c.lumbar, thoracic: c.thoracic } : null;
+  } catch {
+    return null;
+  }
 }
 
 const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [29, 31], [27, 31], [28, 30], [30, 32], [28, 32]];

@@ -270,7 +270,10 @@ const METRIC = {
   kneeStart: ['시작 무릎각', '°'], hipStart: ['시작 고관절각', '°'], hipTop: ['락아웃 고관절각', '°'], layback: ['상체 젖힘', '°'],
   mcv: ['평균 속도', 'm/s'], peak: ['최고 속도', 'm/s'], midfootCm: ['미드풋 편차', 'cm'], hipMA: ['고관절 모멘트암', 'cm'],
   kneeMA: ['무릎 모멘트암', 'cm'], hipMARise: ['고관절 MA 증가', '%'], lockoutOffsetCm: ['락아웃 바-어깨', 'cm'], travelCm: ['바 수평 이동', 'cm'],
-  braceSec: ['반복 전 정지', '초'], trunkShrink: ['몸통 단축', '%'], torsoJerk: ['상체 급변', '°'],
+  braceSec: ['반복 전 정지', '초'], torsoJerk: ['상체 급변', '°'],
+  lumbarFlex: ['허리 굽힘 변화', '%'], thoracicFlex: ['등 상부 굽힘 변화', '%'], backShift: ['초반 등 각도 변화', '°'], kneeGap: ['바-무릎 거리', ''],
+  shoulderAhead: ['어깨-바 앞뒤', ''], leanUp: ['상승 초반 상체 변화', '°'], touch: ['터치 위치', ''], jBack: ['J 경로', ''],
+  buttLift: ['엉덩이 들림', '%'], shoulderLift: ['어깨 들림', '%'], elbowAbove: ['팔꿈치-어깨 높이', ''], descentSec: ['하강 시간', '초'], kneeDip: ['무릎 반동', '°'],
   valgusL: ['왼무릎 밸거스', '°'], valgusR: ['오른무릎 밸거스', '°'], kneeToe: ['무릎-발끝 차', '°'], heelCm: ['뒤꿈치 들림', 'cm'],
   flexAsym: ['좌우 굴곡차', '°'], hipShiftCm: ['힙 시프트(+오른쪽)', 'cm'], pelvisTiltCm: ['골반 높이차', 'cm'], trunkRot: ['몸통 회전', '°'],
   barTiltCm: ['바 기울기', 'cm'], flare: ['팔꿈치 벌어짐', '°'], lateralLean: ['옆 기울기', '°'],
@@ -285,7 +288,7 @@ function runVideoEval(win) {
   return evaluateForm({
     frames: e.frames, lift: e.lift, view: e.view, aspect: e.aspect, T: T(),
     bar: e.bar ? { track: e.bar, scale: e.scale } : null,
-    expectedReps: Number($('#formReps').value) || 0, window: win, style: state.settings.liftStyle || {},
+    expectedReps: Number($('#formReps').value) || 0, window: win, style: state.settings.liftStyle || {}, purpose: state.settings.evalPurpose || 'longevity',
   });
 }
 
@@ -383,7 +386,7 @@ $('#formAnalyze').addEventListener('click', async () => {
 });
 
 // 판정 범주별 묶음: 규정(심판) → 효율 → 주의 → 일관성
-const CAT_KO = { rule: '규정 (심판 판정)', eff: '효율 (힘 전달)', risk: '주의 (위험 신호)', cons: '일관성' };
+const CAT_KO = { rule: '규정 (심판 판정)', risk: '부하 위험 (지속성)', fatigue: '피로 시 무너짐', eff: '효율 (힘 전달)', rom: '가동범위·통제', cons: '일관성' };
 function catList(issues) {
   const groups = {};
   for (const i of issues) (groups[i.cat || 'eff'] = groups[i.cat || 'eff'] || []).push(i);
@@ -416,7 +419,7 @@ function finishEval(video, c) {
     [...video.summary, ...video.reps.flatMap((r) => r.issues)].forEach((i) => {
       if (i.level === 'good' || (i.level === 'info' && !i.text.startsWith('스티킹 포인트'))) return;
       const k = i.text;
-      issueCount[k] = issueCount[k] || { level: i.level, text: i.text, n: 0 };
+      issueCount[k] = issueCount[k] || { level: i.level, text: i.text, cat: i.cat, n: 0 };
       issueCount[k].n++;
     });
   }
@@ -832,6 +835,7 @@ function renderPreset() {
   const ls = state.settings.liftStyle || {};
   $('#styleSquat').value = ls.squat || 'auto';
   $('#styleDeadlift').value = ls.deadlift || 'auto';
+  $('#evalPurpose').value = state.settings.evalPurpose || 'longevity';
   const sel = $('#formPreset');
   const cur = state.settings.formPreset || 'balanced';
   sel.innerHTML = Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -866,6 +870,7 @@ $('#savePreset').addEventListener('click', () => {
   state.settings.formPreset = key;
   state.settings.customThresholds = custom;
   state.settings.liftStyle = { squat: $('#styleSquat').value, deadlift: $('#styleDeadlift').value };
+  state.settings.evalPurpose = $('#evalPurpose').value;
   persist();
   renderThresholdEditor(key);
   $('#presetMsg').textContent = `저장됨 (직접 수정 ${Object.keys(custom).length}개)`;

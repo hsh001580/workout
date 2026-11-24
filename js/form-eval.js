@@ -61,7 +61,52 @@ function catOf(text) {
   return 'eff';
 }
 
-export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 1, T = DEFAULT_THRESHOLDS, bar = null, expectedReps = 0, window = null, style = {} }) {
+// 평가 목적 '지속 성장'(기본): 대회 전용 판정(머리 들림·정지 신호 등)을 빼고 '규정'을 '가동범위·통제'로 바꿔 읽는다
+const MEET_ONLY = /머리 들림|가슴에서 정지|터치앤고|대회 퍼즈/;
+function forLongevity(i) {
+  if (MEET_ONLY.test(i.text)) return null;
+  let cat = i.cat;
+  let level = i.level;
+  if (cat === 'rule') {
+    if (/발 위치 이동|발을 옮김|발 위치 이동/.test(i.text)) cat = 'eff';
+    else if (/엉덩이가 벤치에서 뜸|어깨가 들림/.test(i.text)) { cat = 'risk'; level = level === 'bad' ? 'warn' : level; }
+    else cat = 'rom';
+  }
+  const text = i.text
+    .replace('규정 깊이 통과', '깊이 충분').replace('팔꿈치 깊이 규정 통과', '팔꿈치 깊이 충분 (가슴까지)')
+    .replace(/\s*\((대회 |2026 IPF |)실격( 가능)?\)/g, '').replace(/\s*\(2023 IPF 규정\)/g, '').replace(/\s*\(실격 사유\)/g, '')
+    .replace('(대회 실격)', '').replace('심판 시야에 따라 실패 가능, ', '');
+  return { ...i, cat, level, text };
+}
+
+// 세트 후반에 자세가 무너지는가: 첫 회차 대비 마지막 두 회차 중 나쁜 쪽 (지속 가능 강도의 핵심 신호)
+const DRIFT = {
+  squat: [['leanUp', 6, '올라올 때 엉덩이 먼저 뜸', '°'], ['torso', 6, '하단 상체각', '°'], ['lumbarFlex', 2, '허리 말림', '%'], ['valgusR', 6, '오른 무릎 밸거스', '°'], ['valgusL', 6, '왼 무릎 밸거스', '°'], ['depth', -0.1, '깊이', '']],
+  deadlift: [['backShift', 6, '바닥에서 뗄 때 등 각도 무너짐', '°'], ['lumbarFlex', 2, '허리 말림', '%'], ['kneeGap', 0.1, '바-다리 거리', ''], ['midfootCm', 3, '바-미드풋 편차', 'cm']],
+  bench: [['shoulderLift', 6, '어깨 들림', '%'], ['buttLift', 4, '엉덩이 들림', '%'], ['touch', 0.08, '터치 위치 변화', ''], ['descentSec', -0.4, '하강 시간', '초']],
+  ohp: [['layback', 5, '상체 젖힘', '°'], ['kneeDip', 5, '무릎 반동', '°'], ['lumbarFlex', -2, '허리 젖힘', '%']],
+};
+export function fatigueDrift(reps, lift) {
+  if (reps.length < 3) return [];
+  const first = reps[0].metrics;
+  const tail = reps.slice(-2).map((r) => r.metrics);
+  const out = [];
+  for (const [k, lim, label, unit] of DRIFT[lift] || []) {
+    if (!Number.isFinite(first[k])) continue;
+    const vals = tail.map((m) => m[k]).filter(Number.isFinite);
+    if (!vals.length) continue;
+    const worse = lim > 0 ? Math.max(...vals) : Math.min(...vals);
+    const d = Math.abs(lim) < 1 && k === 'touch' ? Math.abs(worse - first[k]) : worse - first[k];
+    if ((lim > 0 && d > lim) || (lim < 0 && d < lim)) {
+      const fmt = (v) => (unit === '' ? v.toFixed(2) : `${Math.round(v * 10) / 10}${unit}`);
+      out.push({ level: 'warn', cat: 'fatigue', text: `세트 후반에 자세 무너짐: ${label} ${fmt(first[k])} → ${fmt(worse)} (1회차 → 후반)` });
+    }
+  }
+  if (out.length >= 2) out.unshift({ level: 'bad', cat: 'fatigue', text: `이 무게·반복 수는 지금 자세를 끝까지 유지하기 어려운 수준 (${out.length}개 지표가 후반에 무너짐): 세트당 반복을 줄이거나 무게를 낮추면 같은 자세로 오래 성장 가능` });
+  return out;
+}
+
+export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 1, T = DEFAULT_THRESHOLDS, bar = null, expectedReps = 0, window = null, style = {}, purpose = 'longevity' }) {
   let win;
   let frames = allFrames;
   if (window) {
@@ -84,7 +129,7 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
     if (!frames.some((f) => f.world)) return { ok: false, error: '3D 좌표를 얻지 못했습니다. 측면 모드로 분석해 주세요.' };
     sag = analyze(sagittalFrames(frames), lift, 1, { ...T, _oblique: true }, opts);
   } else {
-    sag = analyze(frames, lift, aspect, T, { ...opts, sagittal: view === 'side' });
+    sag = analyze(frames, lift, aspect, view === 'side' ? T : { ...T, _noSpine: true }, { ...opts, sagittal: view === 'side' });
   }
   if (!sag.ok) return { ...sag, window: win, timeline: sag.timeline };
   const { reps, summary } = sag;
@@ -124,6 +169,15 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
     barResult.series = series;
   }
 
+  // 세트 후반 무너짐 (바벨·정면 지표까지 합친 뒤)
+  const drift = fatigueDrift(reps, lift);
+  summary.push(...drift);
+  if (purpose !== 'meet') {
+    reps.forEach((r) => { r.issues = r.issues.map(forLongevity).filter(Boolean); });
+    const kept = summary.map(forLongevity).filter(Boolean);
+    summary.length = 0;
+    summary.push(...kept);
+  }
   const styleName = lift === 'squat' ? chosen.squat : lift === 'deadlift' ? chosen.deadlift : null;
   if (lift === 'squat' || lift === 'deadlift') {
     const src = (style[lift] && style[lift] !== 'auto') ? '설정' : auto[lift] ? `자동 판단: ${auto.how}` : '미지정 (설정에서 고르면 기준이 정확해짐)';
@@ -139,6 +193,7 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
     view,
     lift,
     style: chosen,
+    purpose,
     window: win,
     timeline: sag.timeline,
     reps,
@@ -153,6 +208,9 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
       valgus: (() => { const a = pick('valgusL'); const b = pick('valgusR'); return a == null && b == null ? null : Math.max(a ?? -99, b ?? -99); })(),
       hipShiftCm: (() => { const v = reps.map((r) => r.metrics.hipShiftCm).filter(Number.isFinite); return v.length ? v.reduce((a, x) => (Math.abs(x) > Math.abs(a) ? x : a), 0) : null; })(),
       midfootCm: (() => { const v = reps.map((r) => r.metrics.midfootCm).filter(Number.isFinite); return v.length ? Math.max(...v.map(Math.abs)) : null; })(),
+      lumbarFlex: (() => { const v = reps.map((r) => r.metrics.lumbarFlex).filter(Number.isFinite); return v.length ? Math.max(...v) : null; })(),
+      // 자세 무너짐: 후반 무너짐 2개 이상 또는 부하 위험 감점 (코칭에서 '자세 유지 한계 강도' 계산에 사용)
+      breakdown: drift.some((i) => i.level === 'bad') || reps.some((r) => r.issues.some((i) => i.cat === 'risk' && i.level === 'bad')),
     },
   };
 }

@@ -102,7 +102,7 @@ test('후방 45° 3D: 정상 스쿼트는 밸거스 없음, 깊이·반복 인�
   assert.ok(res.ok, res.error);
   assert.equal(res.reps.length, 3);
   assert.ok(res.stats.valgus < 5, `valgus ${res.stats.valgus}`);
-  assert.ok(res.reps.every((r) => r.issues.some((i) => i.text.includes('규정 깊이'))), JSON.stringify(res.reps[0].issues));
+  assert.ok(res.reps.every((r) => r.issues.some((i) => (i.text.includes('깊이 충분') || i.text.includes('규정 깊이')))), JSON.stringify(res.reps[0].issues));
 });
 
 test('후방 45° 3D: 오른 무릎 밸거스와 힙 시프트 감지', () => {

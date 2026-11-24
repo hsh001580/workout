@@ -59,7 +59,9 @@ const FLAG_RULES = [
   ['hipShift', /골반이 (왼|오른)쪽으로/],
   ['heel', /뒤꿈치 .*들림/],
   ['barPath', /미드풋|바 경로|바가 미드풋/],
-  ['brace', /재브레이싱|몸통 길이|복압이 풀린/],
+  ['brace', /재브레이싱|복압이 풀린/],
+  ['lumbar', /허리가 (조금 )?(둥글게 )?말림/],
+  ['fatigue', /세트 후반에 자세 무너짐|끝까지 유지하기 어려운/],
   ['lockout', /락아웃 불완전|락아웃에서 바가 미드풋/],
   ['jcurve', /어깨 쪽으로 돌아오지 않고|락아웃 위치가 어깨 위가 아님|락아웃에서 바가 어깨 관절/],
   ['touchHigh', /터치 위치가 높음/],
@@ -69,7 +71,7 @@ const FLAG_RULES = [
   ['shoulderLift', /어깨가 들림/],
   ['feet', /발이 움직임|발 위치 이동|발을 옮김/],
   ['descentFast', /하강이 너무 빠름/],
-  ['layback', /젖힘|과신전/],
+  ['layback', /젖힘|젖혀짐|과신전/],
   ['kneeDip', /무릎 반동/],
   ['pause', /정지 없음/],
   ['forearm', /전완|팔꿈치가 바 (아래|바로)/],
@@ -91,6 +93,7 @@ export function flagsOf(texts = []) {
 // 결함 → 변형 운동 (pct는 e1RM 대비), 보조 운동, 큐
 const FIX = {
   squat: {
+    lumbar: { v: ['퍼즈 스쿼트 (하단 2초)', 3, 3, 0.62], cue: '하단에서 골반이 말려 들어가지 않는 깊이까지, 벨트에 360° 복압을 유지', acc: ['데드버그 3×8/쪽', '버드독 3×8/쪽'] },
     downward: { v: ['퍼즈 스쿼트 (하단 2초)', 3, 3, 0.68], cue: '하단에서 한 번에 일어서기: 멈칫해도 다시 내려가지 않게 가속 유지 (실격 사유)' },
     feet: { cue: '셋업에서 발 위치를 정하고 반복 내내 발 전체로 지면 누르기' },
     consistency: { v: ['템포 스쿼트 (3초 하강)', 3, 4, 0.62], cue: '매 회차 같은 깊이·상체각: 하강 템포를 일정하게' },
@@ -104,6 +107,7 @@ const FIX = {
     stickLow: { v: ['핀 스쿼트 (스티킹 높이에서 시작)', 3, 3, 0.7], cue: '스티킹 구간에서 가속 의도 유지' },
   },
   deadlift: {
+    lumbar: { v: ['루마니안 데드리프트 (허리 중립)', 3, 8, 0.5], cue: '바닥에서 떼기 전 슬랙 제거·복압, 허리 중립을 유지할 수 있는 무게로', acc: ['백 익스텐션 (허리 중립) 3×12'] },
     downward: { v: ['블록 풀 (무릎 높이)', 3, 3, 0.8], cue: '락아웃까지 한 번에: 허벅지에 바를 얹거나 다시 내렸다 올리지 않기 (실격 사유)', acc: ['힙 쓰러스트 3×8'] },
     feet: { cue: '셋업 후 발 고정' },
     consistency: { v: ['데드리프트 (매 회차 바닥에서 셋업 리셋)', 3, 2, 0.75], cue: '매 회차 같은 셋업 순서: 발 → 그립 → 슬랙 제거 → 숨 → 당기기' },
@@ -161,9 +165,10 @@ const DEFAULT_SECONDARY = { bench: ['퍼즈 벤치 (가슴 1초)', 3, 5, 0.7] };
 function pickFix(lift, flags) {
   if (!flags) return null;
   const table = FIX[lift] || {};
-  // 규정 위반(실격 사유)을 먼저 고치고, 그다음 많이 나온 결함
-  const RULE = new Set(['downward', 'elbowDepth', 'headLift', 'buttLift', 'depth', 'feet', 'lockout']);
-  const ranked = Object.entries(flags).filter(([k]) => k !== 'sticking' && table[k]).sort((a, b) => (RULE.has(b[0]) - RULE.has(a[0])) || b[1] - a[1]);
+  // 부하 위험(허리·어깨) → 통제(재하강·히칭) → 가동범위 순으로 먼저 고치고, 그다음 많이 나온 결함
+  const PRIORITY = ['lumbar', 'buttLift', 'shoulderLift', 'touchHigh', 'layback', 'downward', 'elbowDepth', 'depth', 'headLift', 'feet', 'lockout'];
+  const rank = (k) => { const i = PRIORITY.indexOf(k); return i < 0 ? 99 : i; };
+  const ranked = Object.entries(flags).filter(([k]) => k !== 'sticking' && table[k]).sort((a, b) => rank(a[0]) - rank(b[0]) || b[1] - a[1]);
   if (ranked.length) return { code: ranked[0][0], ...table[ranked[0][0]] };
   if (flags.sticking) {
     const k = flags.sticking >= 55 ? 'stickHigh' : 'stickLow';
@@ -282,6 +287,14 @@ export function prescribe(lift, ctx) {
     }
   }
 
+  // 3-1) 지난 세션 세트 후반에 자세가 무너졌으면: 세트당 반복↓, 세트 수↑ (같은 총량을 좋은 자세로)
+  if (!ctx.secondary && prev?.stats?.breakdown && prevFlags?.fatigue && !phase.deload) {
+    reps = Math.max(2, reps - 1);
+    backReps = Math.max(2, backReps - 1);
+    backSets += 1;
+    reasons.push('지난 세션 세트 후반에 자세가 무너짐 → 세트당 반복 1회↓, 백오프 1세트↑ (같은 총량을 좋은 자세로)');
+  }
+
   // 4) 오늘 컨디션
   const ready = readinessOf(ctx.checkin);
   if (ready != null && !phase.deload) {
@@ -306,6 +319,22 @@ export function prescribe(lift, ctx) {
   rpe = Math.max(5.5, Math.round(rpe * 2) / 2);
   let kg = loadFor(e1rm, reps, rpe);
   if (painSwap) { name = painSwap; kg = round25(kg * 0.8); rpe = Math.min(rpe, 7); }
+  // 자세 유지 한계 강도: 자세가 무너진 세션(후반 무너짐·허리 말림 등)이 2회 이상이면 그 강도 아래로 탑세트 제한
+  if (!ctx.secondary && !phase.deload && !painSwap) {
+    const broke = logs
+      .filter((l) => l.lift === lift && !l.variation && l.date < date && Number(l.weight) > 0 && l.stats?.breakdown)
+      .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
+      .map((l) => Number(l.weight) / liftE1rm(lift, logs, settings, l.date).e1rm)
+      .filter((x) => Number.isFinite(x) && x > 0.4).sort((a, b) => a - b);
+    if (broke.length >= 2) {
+      const limit = broke[1]; // 한 번의 예외로 과하게 막지 않도록 두 번째로 낮은 강도
+      if (kg / e1rm >= limit - 0.01) {
+        kg = round25(e1rm * (limit - 0.03));
+        backSets += 1;
+        reasons.push(`자세 유지 한계 강도 약 ${Math.round(limit * 100)}% (이 강도 이상에서 자세가 무너진 세션 ${broke.length}회) → 탑세트를 ${Math.round((limit - 0.03) * 100)}%로 제한, 백오프 1세트↑로 볼륨 확보. 자세가 유지되면 한계가 자동으로 올라감`);
+      }
+    }
+  }
   const backKg = round25(kg * (1 - drop));
 
   // 7) 자세 결함·스티킹 포인트 → 변형 운동 / 큐 / 보조
@@ -347,7 +376,7 @@ function fixLabel(code) {
     forearm: '전완 정렬', flare: '팔꿈치 벌어짐', barTilt: '바벨 기울어짐', dlStart: '시작 자세', stickLow: '하단 스티킹', stickHigh: '상단 스티킹',
     jcurve: '바 경로(J 경로) 이탈', touchHigh: '터치 위치 높음', touchLow: '터치 위치 낮음', touchVar: '터치 위치 불일정',
     buttLift: '엉덩이 들림', shoulderLift: '견갑 풀림', feet: '발 움직임', descentFast: '하강 통제 부족',
-    downward: '상승 중 하강·히칭 (규정)', elbowDepth: '팔꿈치 깊이 (규정)', headLift: '머리 들림 (규정)', consistency: '회차 간 동작 편차',
+    downward: '상승 중 하강·히칭', elbowDepth: '팔꿈치 깊이 부족', headLift: '머리 들림', consistency: '회차 간 동작 편차', lumbar: '허리 말림',
   }[code] || code;
 }
 
