@@ -222,9 +222,9 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
     } else {
       for (const lift of rotation.lifts) {
         const h = wave.heavy;
-        const kg = roundTo((tm[lift] * h.pct) / 100);
+        const kg = roundTo((tm[lift] * h.pct) / 100, 2 * (Number(settings.minPlate) || 1.25));
         let detail = `${h.sets}세트 × ${h.reps}회 @ ${kg}kg (TM ${h.pct}%)`;
-        if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100)}kg`;
+        if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100, 2 * (Number(settings.minPlate) || 1.25))}kg`;
         items.push({
           type: 'lift', lift, kind: 'heavy',
           title: LIFT_KO[lift], detail, kg, sets: h.sets, reps: h.reps,

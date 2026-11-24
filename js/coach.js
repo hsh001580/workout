@@ -20,7 +20,10 @@ export function pctOf(reps, rpe) {
 }
 export const e1rmOf = (kg, reps, rpe) => kg / pctOf(reps, rpe);
 export const round25 = (kg) => Math.round(kg / 2.5) * 2.5;
-export const loadFor = (e1, reps, rpe) => round25(e1 * pctOf(reps, rpe));
+// 가장 작은 원판(한쪽) × 2 = 바벨 무게 단위. 1.25kg 원판이 없으면 5kg 단위
+export const plateStep = (settings) => 2 * (Number(settings?.minPlate) > 0 ? Number(settings.minPlate) : 1.25);
+export const roundLoad = (kg, step = 2.5) => Math.round(kg / step) * step;
+export const loadFor = (e1, reps, rpe, step = 2.5) => roundLoad(e1 * pctOf(reps, rpe), step);
 
 // ---------- 블록 ----------
 export const BLOCK = [
@@ -282,6 +285,8 @@ export function prescribe(lift, ctx) {
   const reasons = [];
   const cues = [];
   const { e1rm, source } = liftE1rm(lift, logs, settings, date);
+  const step = plateStep(settings);
+  const rnd = (kg) => roundLoad(kg, step);
   const wi = Math.min(phase.wi, phase.reps.length - 1);
   const sch = LIFT_SCHEME[lift]?.[phase.key];
   const at = (arr) => arr[Math.min(wi, arr.length - 1)];
@@ -344,8 +349,8 @@ export function prescribe(lift, ctx) {
   const cap = LIFT_CAP[lift];
   if (cap) { reps = Math.min(reps, cap.reps); backReps = Math.min(backReps, cap.backReps); backSets = Math.min(backSets, cap.backSets); }
   rpe = Math.max(5.5, Math.round(rpe * 2) / 2);
-  let kg = loadFor(e1rm, reps, rpe);
-  if (painSwap) { name = painSwap; kg = round25(kg * 0.8); rpe = Math.min(rpe, 7); }
+  let kg = loadFor(e1rm, reps, rpe, step);
+  if (painSwap) { name = painSwap; kg = rnd(kg * 0.8); rpe = Math.min(rpe, 7); }
   // 자세 유지 한계 강도: 자세가 무너진 세션(후반 무너짐·허리 말림 등)이 2회 이상이면 그 강도 아래로 탑세트 제한
   if (!ctx.secondary && !phase.deload && !painSwap) {
     const broke = logs
@@ -356,14 +361,15 @@ export function prescribe(lift, ctx) {
     if (broke.length >= 2) {
       const limit = broke[1]; // 한 번의 예외로 과하게 막지 않도록 두 번째로 낮은 강도
       if (kg / e1rm >= limit - 0.01) {
-        kg = round25(e1rm * (limit - 0.03));
+        kg = rnd(e1rm * (limit - 0.03));
         backSets += 1;
         reasons.push(`자세 유지 한계 강도 약 ${Math.round(limit * 100)}% (이 강도 이상에서 자세가 무너진 세션 ${broke.length}회) → 탑세트를 ${Math.round((limit - 0.03) * 100)}%로 제한, 백오프 1세트↑로 볼륨 확보. 자세가 유지되면 한계가 자동으로 올라감`);
       }
     }
   }
   if (cap) backSets = Math.min(backSets, cap.backSets);
-  const backKg = round25(kg * (1 - drop));
+  // 무게 단위가 크면(원판 부족) 감량분이 반올림으로 사라질 수 있어 최소 한 단위는 내림
+  const backKg = Math.min(rnd(kg * (1 - drop)), kg - step);
 
   // 7) 자세 결함·스티킹 포인트 → 변형 운동 / 큐 / 보조
   const fix = pickFix(lift, prevFlags);
@@ -374,20 +380,20 @@ export function prescribe(lift, ctx) {
     if (fix.acc) accessories.push(...fix.acc);
     if (fix.v) {
       const [vn, vs, vr, vp] = fix.v;
-      variation = { name: vn, sets: phase.deload ? 1 : vs, reps: vr, kg: vp ? round25(e1rm * vp) : null, why: `지난 세션 ${fixLabel(fix.code)}` };
+      variation = { name: vn, sets: phase.deload ? 1 : vs, reps: vr, kg: vp ? rnd(e1rm * vp) : null, why: `지난 세션 ${fixLabel(fix.code)}` };
     }
   }
 
   if (ctx.secondary) {
     // 등+팔 날의 2회차: 약점 변형이 있으면 그것, 없으면 기본 볼륨 처방
     const base = DEFAULT_SECONDARY[lift];
-    const v = variation || (base ? { name: base[0], sets: base[1], reps: base[2], kg: round25(e1rm * base[3]), why: base[4] } : null);
+    const v = variation || (base ? { name: base[0], sets: base[1], reps: base[2], kg: rnd(e1rm * base[3]), why: base[4] } : null);
     if (!v) return null;
-    if (phase.deload) { v.sets = Math.max(1, v.sets - 1); if (v.kg) v.kg = round25(v.kg * 0.88); }
+    if (phase.deload) { v.sets = Math.max(1, v.sets - 1); if (v.kg) v.kg = rnd(v.kg * 0.88); }
     return { lift, secondary: true, name: v.name, sets: v.sets, reps: v.reps, kg: v.kg, rpe: 7, e1rm, e1Source: source, reasons: [v.why], cues, accessories };
   }
 
-  const single = phase.single && !painSwap ? { kg: loadFor(e1rm, 1, 8.5), rpe: 8.5 } : null;
+  const single = phase.single && !painSwap ? { kg: loadFor(e1rm, 1, 8.5, step), rpe: 8.5 } : null;
   return {
     lift, name, reps, rpe, kg, e1rm, e1Source: source,
     single,

@@ -156,6 +156,14 @@
           <label>벤치 1RM (kg) <input type="number" name="bench1rm" step="2.5" /></label>
           <label>데드리프트 1RM (kg) <input type="number" name="deadlift1rm" step="2.5" /></label>
           <label>트레이닝 맥스 (% of 1RM) <input type="number" name="tmPercent" min="80" max="100" /></label>
+          <label>가장 작은 원판 (한쪽)
+            <select name="minPlate">
+              <option value="0.5">0.5kg (1kg 단위)</option>
+              <option value="1.25">1.25kg (2.5kg 단위)</option>
+              <option value="2.5">2.5kg (5kg 단위)</option>
+              <option value="5">5kg (10kg 단위)</option>
+            </select>
+          </label>
           <label>오버헤드 프레스 1RM (kg) <input type="number" name="ohp1rm" step="2.5" /></label>
           <label>주간 러닝 거리 (km, 가민 기록 없을 때) <input type="number" name="weeklyKm" min="5" max="150" /></label>
           <label>최근 5K 기록 (mm:ss, 가민 기록 없을 때) <input type="text" name="fiveK" /></label>

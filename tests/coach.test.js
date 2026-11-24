@@ -171,3 +171,24 @@ test('오버헤드프레스는 탑세트를 더 무겁게 (같은 주차 스쿼�
     assert.ok(o.kg / settings.ohp1rm >= q.kg / settings.squat1rm - 0.02, `w${w} ${o.kg} ${q.kg}`);
   }
 });
+
+test('1.25kg 원판이 없으면 모든 바벨 무게가 5kg 단위, 백오프는 탑세트보다 가벼움', async () => {
+  const { prescribe, phaseAt } = await import('../js/coach.js');
+  const state = { formLogs: [], coach: {} };
+  for (const minPlate of [2.5, 1.25]) {
+    const unit = minPlate * 2;
+    for (let w = 0; w < 8; w++) {
+      const phase = phaseAt(w, {});
+      for (const lift of ['squat', 'bench', 'deadlift', 'ohp']) {
+        for (const secondary of [false, true]) {
+          const r = prescribe(lift, { state, settings: { ...settings, minPlate }, phase, date: '2026-12-01', secondary });
+          if (!r) continue;
+          for (const kg of [r.kg, r.backoff?.kg, r.single?.kg, r.variation?.kg].filter((x) => x != null)) {
+            assert.equal(Math.abs(kg / unit - Math.round(kg / unit)) < 1e-9, true, `${lift} w${w} ${kg}kg not multiple of ${unit}`);
+          }
+          if (r.backoff?.sets) assert.ok(r.backoff.kg < r.kg, `${lift} w${w} backoff ${r.backoff.kg} >= ${r.kg}`);
+        }
+      }
+    }
+  }
+});
