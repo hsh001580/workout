@@ -113,3 +113,44 @@ test('준비 구간이 없는 영상은 자르지 않음', () => {
   const w = findActiveWindow(frames, 'squat');
   assert.equal(w.trimmed, false);
 });
+
+// ---------- "1회만 인식" 증상 재현 ----------
+const depthSet = (depths, dur = 2.4) => depths.map((d) => [dur, (p) => body({ u: d * Math.sin(Math.PI * p) })]);
+
+test('반복마다 깊이가 달라도 각 회차 인식 (고정 기준선 방식의 실패 사례)', () => {
+  const frames = seq([[1, () => body({})], ...depthSet([1.0, 0.55, 0.9, 0.5, 0.8]), [1, () => body({})]]);
+  const res = evaluateForm({ frames, lift: 'squat', view: 'side' });
+  assert.ok(res.ok, res.error);
+  assert.equal(res.reps.length, 5);
+});
+
+test('세트 중간 발목 인식이 튀어도(원판에 가림) 회차가 빠지지 않음', () => {
+  const frames = seq([[1, () => body({})], ...depthSet([1, 1, 1, 1]), [1, () => body({})]]);
+  // 4~5초, 7~7.5초에 발목 좌표가 튐
+  frames.forEach((f) => {
+    if ((f.t > 4 && f.t < 5) || (f.t > 7 && f.t < 7.5)) f.lm = f.lm.map((p, i) => ([27, 28].includes(i) ? { ...p, x: p.x + 0.15 * Math.sin(f.t * 40) } : p));
+  });
+  const res = evaluateForm({ frames, lift: 'squat', view: 'side' });
+  assert.ok(res.ok, res.error);
+  assert.equal(res.reps.length, 4);
+});
+
+test('입력한 반복 수에 맞춰 민감도 자동 조정 + 불일치 경고', () => {
+  // 피로로 2·4회차가 훨씬 얕아진 세트: 기본 민감도는 얕은 회차를 놓침
+  const frames = seq([[1, () => body({})], ...depthSet([1, 0.3, 1, 0.3]), [1, () => body({})]]);
+  const plain = evaluateForm({ frames, lift: 'squat', view: 'side' });
+  assert.equal(plain.reps.length, 2);
+  const hinted = evaluateForm({ frames, lift: 'squat', view: 'side', expectedReps: 4 });
+  assert.equal(hinted.reps.length, 4);
+  assert.ok(hinted.reps[1].issues.some((i) => /깊이 부족/.test(i.text)), '얕은 회차는 깊이 부족으로 평가');
+  const wrong = evaluateForm({ frames, lift: 'squat', view: 'side', expectedReps: 6 });
+  assert.ok(wrong.summary.some((i) => /입력한 반복 수는 6회/.test(i.text)));
+});
+
+test('직접 지정한 구간만 분석', () => {
+  const frames = seq([[1, () => body({})], ...depthSet([1, 1, 1, 1]), [1, () => body({})]]);
+  const res = evaluateForm({ frames, lift: 'squat', view: 'side', window: { t0: 0, t1: 6 } });
+  assert.equal(res.reps.length, 2);
+  assert.ok(res.window.manual);
+  assert.ok(res.timeline.t.length > 10);
+});

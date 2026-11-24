@@ -278,6 +278,78 @@ const METRIC = {
 const metricHTML = (m) => Object.entries(m).filter(([, v]) => v != null && Number.isFinite(v))
   .map(([k, v]) => `<span>${METRIC[k]?.[0] || k} <b>${v}${METRIC[k]?.[1] ?? ''}</b></span>`).join('');
 
+let lastExtract = null; // 마지막 포즈 추출 결과 (구간을 바꿔 다시 분석할 때 재사용)
+
+function runVideoEval(win) {
+  const e = lastExtract;
+  return evaluateForm({
+    frames: e.frames, lift: e.lift, view: e.view, aspect: e.aspect, T: T(),
+    bar: e.bar ? { track: e.bar, scale: e.scale } : null,
+    expectedReps: Number($('#formReps').value) || 0, window: win,
+  });
+}
+
+async function drawWorst(video) {
+  if (!video?.ok || !lastExtract) return;
+  const pose = await import('./pose.js');
+  const { frames, lift } = lastExtract;
+  const worst = video.reps.reduce((a, r) => (r.score < a.score ? r : a), video.reps[0]);
+  const kt = video.pts[worst.keyFrame].t;
+  const raw = frames.reduce((a, f) => (Math.abs(f.t - kt) < Math.abs(a.t - kt) ? f : a), frames[0]);
+  const label = `${worst.rep}회차 ${lift === 'deadlift' || lift === 'ohp' ? '시작 자세' : '최저점'}`;
+  await pose.drawKeyFrame($('#formVideoEl'), $('#formCanvas'), raw, label, video.barResult?.series);
+}
+
+// 움직임 타임라인: 아래로 갈수록 하단 자세. 회색 = 준비 구간(제외), 색 띠 = 인식된 회차
+function timelineHTML(video) {
+  const tl = video.timeline;
+  const W = 600;
+  const H = 150;
+  const T0 = tl.t[0];
+  const T1 = tl.t[tl.t.length - 1] || T0 + 1;
+  const x = (t) => ((t - T0) / (T1 - T0)) * W;
+  const y = (v) => 30 + ((Math.min(1.2, Math.max(-0.2, v)) + 0.2) / 1.4) * (H - 62);
+  let shade = '';
+  let i = 0;
+  while (i < tl.t.length) {
+    if (tl.active && !tl.active[i]) {
+      const a = i;
+      while (i < tl.t.length && !tl.active[i]) i++;
+      shade += `<rect x="${x(tl.t[a])}" y="0" width="${Math.max(2, x(tl.t[i - 1]) - x(tl.t[a]))}" height="${H - 26}" fill="var(--line)" opacity="0.8"/>`;
+    } else i++;
+  }
+  const reps = (video.reps || []).map((r) => {
+    const a = r.conc?.[0] ?? r.ecc?.[0];
+    const b = r.conc?.[1] ?? r.ecc?.[1];
+    if (a == null || b == null) return '';
+    return `<rect x="${x(a)}" y="0" width="${Math.max(2, x(b) - x(a))}" height="${H - 26}" fill="var(--good-bg)"/><text x="${(x(a) + x(b)) / 2}" y="24" text-anchor="middle" font-weight="700">${r.rep}</text>`;
+  }).join('');
+  const path = tl.t.map((t, k) => `${k ? 'L' : 'M'}${x(t).toFixed(1)},${y(tl.n[k]).toFixed(1)}`).join('');
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => { const t = T0 + f * (T1 - T0); return `<text x="${x(t)}" y="${H - 4}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}">${t.toFixed(1)}s</text>`; }).join('');
+  const w = video.window || {};
+  return `<h3>타임라인 · 인식 ${video.reps?.length ?? 0}회</h3>
+    <svg class="chart timeline" viewBox="0 0 ${W} ${H}" role="img">${shade}${reps}<path d="${path}" fill="none" stroke="var(--primary)" stroke-width="2"/>${ticks}</svg>
+    <div class="legend"><span><i style="background:var(--good-bg)"></i>인식된 회차</span><span><i style="background:var(--line)"></i>준비 구간 (제외)</span><span>선이 아래로 = 하단 자세</span></div>
+    <div class="row tl-controls">
+      <label>시작(초) <input type="number" id="tlStart" step="0.1" value="${(w.manual ? w.t0 : T0).toFixed(1)}"/></label>
+      <label>끝(초) <input type="number" id="tlEnd" step="0.1" value="${(w.manual ? w.t1 : T1).toFixed(1)}"/></label>
+      <button id="tlApply">이 구간으로 다시 분석</button>
+    </div>
+    <p class="muted">반복 수 칸에 실제 반복 수를 넣으면 그 수에 맞춰 인식 민감도를 자동 조정합니다.</p>`;
+}
+
+function bindTimeline(video, c) {
+  $('#tlApply')?.addEventListener('click', async () => {
+    if (!lastExtract) return;
+    const t0 = Number($('#tlStart').value);
+    const t1 = Number($('#tlEnd').value);
+    if (!(t1 > t0)) { alert('끝 시점이 시작보다 뒤여야 합니다.'); return; }
+    const v = runVideoEval({ t0, t1 });
+    await drawWorst(v);
+    finishEval(v, c);
+  });
+}
+
 $('#formAnalyze').addEventListener('click', async () => {
   const btn = $('#formAnalyze');
   const lift = $('#formLift').value;
@@ -297,14 +369,9 @@ $('#formAnalyze').addEventListener('click', async () => {
       const aspect = v.videoWidth / v.videoHeight;
       const { frames, bar } = await pose.extractFrames(v, setProgress, { plate });
       const scale = plate ? (Number($('#plateDiam').value || 45) / 200) / (plate.rPx / v.videoHeight) : 0;
-      video = evaluateForm({ frames, lift, view, aspect, T: T(), bar: bar ? { track: bar, scale } : null });
-      if (video.ok) {
-        const worst = video.reps.reduce((a, r) => (r.score < a.score ? r : a), video.reps[0]);
-        const kt = video.pts[worst.keyFrame].t;
-        const raw = frames.reduce((a, f) => (Math.abs(f.t - kt) < Math.abs(a.t - kt) ? f : a), frames[0]);
-        const label = `${worst.rep}회차 ${lift === 'deadlift' || lift === 'ohp' ? '시작 자세' : '최저점'}`;
-        await pose.drawKeyFrame(v, $('#formCanvas'), raw, label, video.barResult?.series);
-      }
+      lastExtract = { frames, bar, aspect, scale, lift, view };
+      video = runVideoEval(null);
+      await drawWorst(video);
     } catch (err) {
       video = { ok: false, error: `영상 분석 실패: ${err.message}. 인터넷 연결을 확인하거나 체크리스트로만 평가하세요.` };
     } finally {
@@ -312,6 +379,12 @@ $('#formAnalyze').addEventListener('click', async () => {
     }
   }
 
+  finishEval(video, { lift, view, checks, rpe, pain, selfScore });
+});
+
+// 분석 결과 → 기록 저장 + 화면 (구간을 바꿔 다시 분석하면 같은 기록을 교체)
+function finishEval(video, c) {
+  const { lift, view, checks, rpe, pain, selfScore } = c;
   const score = video?.ok ? Math.round(video.score * 0.7 + selfScore * 0.3) : selfScore;
   const missed = checks.filter((c) => !c.checked).map((c) => CHECKLIST[lift][Number(c.dataset.ck)]);
   const tips = [];
@@ -347,6 +420,7 @@ $('#formAnalyze').addEventListener('click', async () => {
     videoSummary: video?.ok ? [...video.summary, ...video.reps.flatMap((r) => r.issues.filter((i) => i.level === 'bad'))].slice(0, 6) : [],
     tips,
   };
+  if (c.replaceId) state.formLogs = state.formLogs.filter((l) => l.id !== c.replaceId);
   state.formLogs.push(log);
   applyAutoDeload();
   persist();
@@ -359,6 +433,7 @@ $('#formAnalyze').addEventListener('click', async () => {
       <div class="muted">${video?.ok ? `${esc(VIEWS[view].name)} · 영상 ${video.score}점 (70%) + 체크리스트 ${selfScore}점 (30%)` : `체크리스트 ${selfScore}점`}</div></div></div>
     ${video && !video.ok ? fbList([{ level: 'warn', text: video.error }]) : ''}
     ${diag.length ? `<h3>힘이 새는 지점</h3>${diag.map((d) => `<div class="diag">${esc(d)}</div>`).join('')}` : ''}
+    ${video?.timeline ? timelineHTML(video) : ''}
     ${video?.ok ? `<h3>세트 요약</h3>${fbList(video.summary.length ? video.summary : [{ level: 'info', text: `${video.reps.length}회 반복 인식` }])}
       ${!plate ? '<p class="muted">원판을 지정하면 바벨 속도·스티킹 포인트·모멘트암도 분석합니다.</p>' : ''}
       <h3>반복별 분석</h3><p class="muted">가장 낮은 점수의 반복만 펼쳐 둡니다. 눌러서 다른 반복을 확인하세요.</p>
@@ -370,7 +445,9 @@ $('#formAnalyze').addEventListener('click', async () => {
     ${next ? `<h3>다음 ${esc(LIFT_KO[lift])} 세션 설계 (${esc(next.date)})</h3>${itemHTML(next.item)}${next.variation ? itemHTML(next.variation) : ''}` : ''}
   </div>`;
   $('#formResult').scrollIntoView({ behavior: 'smooth' });
-});
+  if (video?.timeline) bindTimeline(video, { ...c, replaceId: log.id });
+}
+
 
 // ---------- 러닝 평가 ----------
 function nextDay(dateStr) {

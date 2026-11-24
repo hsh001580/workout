@@ -15,22 +15,36 @@ export const VIEWS = {
  * @param frames [{t, lm, world}]
  * @param bar { track: [{t, x, y, lost}], scale } | null  (x, y는 영상 높이 기준 정규화, scale은 1단위당 m)
  */
-export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 1, T = DEFAULT_THRESHOLDS, bar = null }) {
-  // 언랙·워크아웃·랙·손 놓기 구간 자동 제외
-  const win = findActiveWindow(allFrames, lift, aspect);
-  const frames = allFrames.filter((f) => f.t >= win.t0 && f.t <= win.t1);
+/**
+ * @param expectedReps 입력한 반복 수 (검출 민감도 자동 조정 힌트)
+ * @param window { t0, t1 } 직접 지정한 분석 구간 (있으면 자동 준비 구간 판단 대신 사용)
+ */
+export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 1, T = DEFAULT_THRESHOLDS, bar = null, expectedReps = 0, window = null }) {
+  let win;
+  let frames = allFrames;
+  if (window) {
+    frames = allFrames.filter((f) => f.t >= window.t0 && f.t <= window.t1);
+    win = { t0: window.t0, t1: window.t1, excluded: [], trimmed: false, manual: true, activeAt: () => true };
+  } else {
+    // 언랙·워크아웃·랙·손 놓기 구간 자동 판단 (반복을 찾은 뒤 그 구간의 반복만 제외)
+    win = findActiveWindow(allFrames, lift, aspect);
+  }
+  const opts = { expectedReps, active: win.activeAt };
   let sag;
   if (view === 'oblique') {
     if (!frames.some((f) => f.world)) return { ok: false, error: '3D 좌표를 얻지 못했습니다. 측면 모드로 분석해 주세요.' };
-    sag = analyze(sagittalFrames(frames), lift, 1, { ...T, _oblique: true });
+    sag = analyze(sagittalFrames(frames), lift, 1, { ...T, _oblique: true }, opts);
   } else {
-    sag = analyze(frames, lift, aspect, T, { sagittal: view === 'side' });
+    sag = analyze(frames, lift, aspect, T, { ...opts, sagittal: view === 'side' });
   }
-  if (!sag.ok) return { ...sag, window: win };
+  if (!sag.ok) return { ...sag, window: win, timeline: sag.timeline };
   const { reps, summary } = sag;
   if (win.trimmed) {
     const f = (x) => x.toFixed(1);
-    summary.unshift({ level: 'info', text: `언랙·랙 등 준비 구간 자동 제외: ${win.excluded.map(([a, b]) => `${f(a)}~${f(b)}초`).join(', ')} → 분석 구간 ${f(win.t0)}~${f(win.t1)}초` });
+    summary.unshift({ level: 'info', text: `언랙·랙 등 준비 구간 자동 제외: ${win.excluded.map(([a, b]) => `${f(a)}~${f(b)}초`).join(', ')}. 틀렸다면 아래 타임라인에서 구간을 직접 지정하세요.` });
+  }
+  if (expectedReps && reps.length !== Number(expectedReps)) {
+    summary.unshift({ level: 'warn', text: `입력한 반복 수는 ${expectedReps}회인데 ${reps.length}회를 인식했습니다. 타임라인에서 구간을 조정해 다시 분석해 보세요.` });
   }
   const topTimes = sag.events.filter((e) => e.type === 'top').map((e) => sag.pts[e.i].t);
 
@@ -71,6 +85,7 @@ export function evaluateForm({ frames: allFrames, lift, view = 'side', aspect = 
     view,
     lift,
     window: win,
+    timeline: sag.timeline,
     reps,
     summary,
     score,

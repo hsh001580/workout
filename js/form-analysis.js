@@ -108,42 +108,89 @@ function medianFilter(a, w = 2) {
   });
 }
 
-// 하단(bottom)/상단(top) 극값 이벤트 탐지
-// 순간 오인식 한 프레임이 범위를 망치지 않도록 중앙값 필터 + 5~95 백분위로 정규화
-export function findEvents(pts, lift) {
+// 지그재그 극값 탐지: 직전 극값에서 h 이상 반대로 움직여야 극값으로 확정.
+// 영상 전체 기준선이 아니라 반전 폭으로 판단하므로 반복마다 깊이가 달라도 각 회차를 잡는다.
+function zigzag(n, h) {
+  const ev = [];
+  let state = 0; // 0 미정, 1 하단(최대) 찾는 중, -1 상단(최소) 찾는 중
+  let maxI = 0;
+  let minI = 0;
+  for (let i = 1; i < n.length; i++) {
+    if (state === 0) {
+      if (n[i] > n[maxI]) maxI = i;
+      if (n[i] < n[minI]) minI = i;
+      if (n[maxI] - n[minI] >= h) {
+        if (maxI > minI) { ev.push({ type: 'top', i: minI }); state = 1; } else { ev.push({ type: 'bottom', i: maxI }); state = -1; minI = i; }
+      }
+    } else if (state === 1) {
+      if (n[i] >= n[maxI]) maxI = i; // 하단은 평평한 구간의 끝 (실제로 올라가기 시작한 시점)
+      if (n[maxI] - n[i] >= h) { ev.push({ type: 'bottom', i: maxI }); state = -1; minI = i; }
+    } else {
+      if (n[i] < n[minI]) minI = i; // 상단은 처음 도달한 시점 (올라오기를 마친 순간)
+      if (n[i] - n[minI] >= h) { ev.push({ type: 'top', i: minI }); state = 1; maxI = i; }
+    }
+  }
+  // 마지막으로 진행 중이던 극값 (영상이 그 자세에서 끝난 경우)
+  const last = ev[ev.length - 1];
+  if (state === 1 && last && n[maxI] - n[last.i] >= h && maxI > last.i) ev.push({ type: 'bottom', i: maxI });
+  if (state === -1 && last && n[last.i] - n[minI] >= h && minI > last.i) ev.push({ type: 'top', i: minI });
+  return ev;
+}
+
+// 이벤트 목록에서 완전한 반복 (하단→상단 구간이 있는 것) 목록.
+// 올라가는 구간(동심성)의 절반 이상이 준비 구간이 아닐 때만 인정 (걷기·랙 동작 오인 방지, 경계 회차 보존)
+export function repSpans(events, lift, ok = () => true) {
+  const activeFrac = (a, b) => {
+    let k = 0;
+    for (let i = a; i <= b; i++) if (ok(i)) k++;
+    return k / (b - a + 1);
+  };
+  const out = [];
+  for (let e = 0; e < events.length; e++) {
+    const ev = events[e];
+    const prev = events[e - 1];
+    const next = events[e + 1];
+    if (lift === 'deadlift') {
+      if (ev.type === 'top' && prev?.type === 'bottom' && activeFrac(prev.i, ev.i) >= 0.5) out.push({ start: prev.i, top: ev.i, bottom: prev.i });
+    } else if (ev.type === 'bottom' && next?.type === 'top' && activeFrac(ev.i, next.i) >= 0.5) {
+      out.push({ prevTop: prev?.type === 'top' ? prev.i : null, bottom: ev.i, nextTop: next.i });
+    }
+  }
+  return out;
+}
+
+/**
+ * 하단(bottom)/상단(top) 극값 이벤트 탐지
+ * @param opts.active (t) => boolean  준비 구간(언랙·랙 등)이 아닌지
+ * @param opts.expectedReps 입력한 반복 수: 이 수에 맞을 때까지 민감도를 자동 조정
+ */
+export function findEvents(pts, lift, opts = {}) {
   if (pts.length < 5) return { events: [], range: 0 };
-  const s = medianFilter(signalSeries(pts, lift), 2);
-  const sorted = [...s].sort((a, b) => a - b);
+  const raw = medianFilter(signalSeries(pts, lift), 2);
+  const s = raw.map((_, i) => (raw[Math.max(0, i - 1)] + raw[i] + raw[Math.min(raw.length - 1, i + 1)]) / 3);
+  const act = pts.map((f) => (opts.active ? opts.active(f.t) : true));
+  // 범위는 준비 구간을 뺀 프레임의 5~95 백분위 (순간 오인식·팔 내림 영향 제거)
+  let vals = s.filter((_, i) => act[i]);
+  if (vals.length < 5) vals = s;
+  const sorted = [...vals].sort((a, b) => a - b);
   const q = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))];
   const lo = q(0.05);
   const hi = q(0.95);
   const range = hi - lo;
   if (range < 0.12) return { events: [], range }; // 팔·다리 길이의 12% 미만 움직임은 반복으로 보지 않음
-  const n = s.map((v) => Math.min(1.2, Math.max(-0.2, (v - lo) / range)));
-  const events = [];
-  let zone = null;
-  let best = -1;
-  const flush = () => {
-    if (zone && best >= 0) {
-      const last = events[events.length - 1];
-      if (last && last.type === zone) {
-        const better = zone === 'bottom' ? n[best] > n[last.i] : n[best] < n[last.i];
-        if (better) last.i = best;
-      } else events.push({ type: zone, i: best });
-    }
-  };
-  for (let i = 0; i < n.length; i++) {
-    const z = n[i] > 0.65 ? 'bottom' : n[i] < 0.35 ? 'top' : null;
-    if (z && z !== zone) {
-      flush();
-      zone = z;
-      best = i;
-    } else if (z && z === zone) {
-      if ((z === 'bottom' && n[i] > n[best]) || (z === 'top' && n[i] < n[best])) best = i;
-    }
+  const n = s.map((v) => Math.min(1.5, Math.max(-0.5, (v - lo) / range)));
+  const ok = (i) => act[i];
+  const expected = Number(opts.expectedReps) || 0;
+  const levels = expected ? [0.5, 0.42, 0.35, 0.28, 0.22, 0.17, 0.13] : [0.35];
+  let best = null;
+  for (const h of levels) {
+    const events = zigzag(n, h);
+    const count = repSpans(events, lift, ok).length;
+    const cand = { events, h, count, diff: expected ? Math.abs(count - expected) : 0 };
+    if (!best || cand.diff < best.diff) best = cand;
+    if (cand.diff === 0) break; // 가장 둔감한(노이즈에 강한) 수준에서 일치하면 채택
   }
-  flush();
-  return { events, range, n };
+  return { events: best.events, range, n, h: best.h, ok, act, signal: s };
 }
 
 function issue(level, text) {
@@ -386,22 +433,11 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
   if (pts.length < 10) {
     return { ok: false, error: '관절 인식이 충분하지 않습니다. 몸 전체가 보이도록 촬영해 주세요.' };
   }
-  const { events, n, range } = findEvents(pts, lift);
-  const reps = [];
-  for (let e = 0; e < events.length; e++) {
-    const ev = events[e];
-    const prev = events[e - 1];
-    const next = events[e + 1];
-    if (lift === 'deadlift') {
-      if (ev.type === 'top' && prev && prev.type === 'bottom') reps.push(analyzeDeadliftRep(pts, prev.i, ev.i, n, T));
-    } else if (ev.type === 'bottom' && (prev || next)) {
-      const pt = prev && prev.type === 'top' ? prev.i : null;
-      const nt = next && next.type === 'top' ? next.i : null;
-      if (nt == null) continue; // 올라오는 구간이 없는 마지막 하강(랙에 내려놓기)은 반복이 아님
-      const fn = { squat: analyzeSquatRep, bench: analyzeBenchRep, ohp: analyzeOhpRep }[lift];
-      reps.push(fn(pts, pt, ev.i, nt, n, T));
-    }
-  }
+  const { events, n, range, ok, act, signal, h } = findEvents(pts, lift, opts);
+  const fn = { squat: analyzeSquatRep, bench: analyzeBenchRep, ohp: analyzeOhpRep }[lift];
+  const reps = repSpans(events, lift, ok || (() => true)).map((sp) => (lift === 'deadlift'
+    ? analyzeDeadliftRep(pts, sp.start, sp.top, n, T)
+    : fn(pts, sp.prevTop, sp.bottom, sp.nextTop, n, T)));
   if (!reps.length) {
     const why = range < 0.12
       ? `움직임이 거의 잡히지 않았습니다 (관절 인식 ${pts.length}/${frames.length}프레임). 종목 선택이 맞는지, 몸 전체가 화면에 보이는지 확인해 주세요.`
@@ -428,7 +464,8 @@ export function analyze(frames, lift, aspect = 1, T = DEFAULT_THRESHOLDS, opts =
     if (slow > 1.6) summary.push(issue('warn', `마지막 반복 상승 시간이 첫 반복의 ${slow.toFixed(1)}배: RPE 9 이상 추정, 다음 세트 무게 유지 또는 감량`));
     else summary.push(issue('good', '반복 간 상승 시간이 일정함'));
   }
-  return { ok: true, side, lift, reps, summary, pts, events, n, finalize: () => finalize(reps, summary) };
+  const timeline = { t: pts.map((f) => f.t), n, active: act, h };
+  return { ok: true, side, lift, reps, summary, pts, events, n, timeline, finalize: () => finalize(reps, summary) };
 }
 
 // 바벨·정면 분석 결과를 합친 뒤 점수 계산

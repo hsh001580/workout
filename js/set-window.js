@@ -10,7 +10,7 @@
 
 const IDS = { nose: [0], shoulder: [11, 12], elbow: [13, 14], wrist: [15, 16], hip: [23, 24], knee: [25, 26], ankle: [27, 28] };
 const FOOT_SPEED = 0.25; // 다리 길이/초
-const GAP_FILL = 0.4; // 초: 이보다 짧은 끊김은 이어 붙임
+const GAP_FILL = 1.0; // 초: 이보다 짧은 끊김(발목 인식 순간 튐 등)은 이어 붙임
 const MIN_SEG = 1.0; // 초: 이보다 짧은 구간은 버림
 const PAD = 0.25; // 초: 구간 앞뒤 여유
 
@@ -46,11 +46,11 @@ function toSegments(times, flags) {
 }
 
 /**
- * @returns { t0, t1, excluded: [[a, b], ...], trimmed: boolean }
+ * @returns { t0, t1, excluded: [[a, b], ...], trimmed, activeAt(t), segments }
  */
 export function findActiveWindow(frames, lift, aspect = 1) {
   const fr = frames.filter((f) => f.lm);
-  const all = { t0: fr[0]?.t ?? 0, t1: fr[fr.length - 1]?.t ?? 0, excluded: [], trimmed: false };
+  const all = { t0: fr[0]?.t ?? 0, t1: fr[fr.length - 1]?.t ?? 0, excluded: [], trimmed: false, activeAt: () => true };
   if (fr.length < 10) return all;
   const P = fr.map((f) => Object.fromEntries(Object.keys(IDS).map((k) => [k, point(f, k, aspect)])));
   const times = fr.map((f) => f.t);
@@ -73,7 +73,12 @@ export function findActiveWindow(frames, lift, aspect = 1) {
       return Math.hypot((b.x - a.x) * aspect, b.y - a.y) / leg / dt;
     }));
   });
-  const still = ankleSpeed.map((v) => v < FOOT_SPEED);
+  // 원판에 발목이 가려지거나 깊이 앉을 때 생기는 순간 튐 제거 (5프레임 중앙값)
+  const speedF = ankleSpeed.map((_, i) => {
+    const w = ankleSpeed.slice(Math.max(0, i - 2), i + 3).sort((a, b) => a - b);
+    return w[Math.floor(w.length / 2)];
+  });
+  const still = speedF.map((v) => v < FOOT_SPEED);
 
   // (2) 바를 쥔 자세
   const headDir = Math.sign(median(P.map((p) => (p.nose && p.shoulder ? p.nose.x - p.shoulder.x : NaN)))) || 1;
@@ -101,11 +106,15 @@ export function findActiveWindow(frames, lift, aspect = 1) {
     for (let i = a + 1; i <= b; i++) if (Number.isFinite(sig[i]) && Number.isFinite(sig[i - 1])) s += Math.abs(sig[i] - sig[i - 1]);
     return s;
   };
-  const best = segs.reduce((x, y) => (activity(y) > activity(x) ? y : x));
-  const t0 = Math.max(all.t0, times[best[0]] - PAD);
-  const t1 = Math.min(all.t1, times[best[1]] + PAD);
+  // 움직임이 있는 구간은 모두 분석 대상 (가장 큰 구간 하나만 고르면 쪼개진 세트에서 회차가 빠짐)
+  const maxAct = Math.max(...segs.map(activity));
+  const keep = segs.filter((sg) => activity(sg) >= maxAct * 0.15).map(([a, b]) => [Math.max(all.t0, times[a] - PAD), Math.min(all.t1, times[b] + PAD)]);
+  const t0 = keep[0][0];
+  const t1 = keep[keep.length - 1][1];
   const excluded = [];
-  if (t0 - all.t0 > 0.3) excluded.push([all.t0, t0]);
-  if (all.t1 - t1 > 0.3) excluded.push([t1, all.t1]);
-  return { t0, t1, excluded, trimmed: excluded.length > 0 };
+  let cur = all.t0;
+  for (const [a, b] of keep) { if (a - cur > 0.5) excluded.push([cur, a]); cur = Math.max(cur, b); }
+  if (all.t1 - cur > 0.5) excluded.push([cur, all.t1]);
+  const activeAt = (t) => keep.some(([a, b]) => t >= a && t <= b);
+  return { t0, t1, excluded, trimmed: excluded.length > 0, activeAt, segments: keep };
 }
