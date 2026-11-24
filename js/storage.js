@@ -34,6 +34,8 @@ export function defaultState() {
     formLogs: [],
     runLogs: [],
     done: {},
+    checkins: {},
+    coach: { deloadWeeks: [], deloadNotes: {} },
     garmin: {
       url: 'data/garmin.enc.json',
       passphrase: '',

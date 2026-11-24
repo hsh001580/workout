@@ -1,0 +1,109 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { pctOf, e1rmOf, loadFor, phaseAt, prescribe, liftE1rm, fatigueSignals, flagsOf } from '../js/coach.js';
+import { buildWeek } from '../js/program.js';
+
+const settings = { squat1rm: 140, bench1rm: 100, deadlift1rm: 180, ohp1rm: 60, weeklyKm: 20, fiveK: '25:00', startDate: '2026-11-23' };
+const st = (over = {}) => ({ formLogs: [], runLogs: [], checkins: {}, coach: {}, ...over });
+const P0 = phaseAt(0, {});
+
+test('RPE 표: 100kg×5 @RPE8 → e1RM ≈123, 역산 일치', () => {
+  assert.ok(Math.abs(pctOf(5, 8) - 0.811) < 1e-9);
+  const e = e1rmOf(100, 5, 8);
+  assert.ok(Math.abs(e - 123.3) < 0.1);
+  assert.equal(loadFor(e, 5, 8), 100);
+  assert.equal(pctOf(1, 10), 1);
+});
+
+test('블록 진행: 축적3 → 강화3 → 실현1 → 디로드1 → 새 블록, 강제 디로드 후 재시작', () => {
+  const keys = Array.from({ length: 9 }, (_, w) => phaseAt(w, {}).key);
+  assert.deepEqual(keys, ['acc', 'acc', 'acc', 'int', 'int', 'int', 'real', 'deload', 'acc']);
+  const forced = { deloadWeeks: [4] };
+  assert.equal(phaseAt(4, forced).key, 'deload');
+  assert.ok(phaseAt(4, forced).forced);
+  assert.equal(phaseAt(5, forced).key, 'acc');
+  assert.equal(phaseAt(5, forced).wi, 0);
+});
+
+test('기록 없으면 설정 1RM 기준으로 처방', () => {
+  const rx = prescribe('squat', { state: st(), settings, phase: P0, date: '2026-11-23' });
+  assert.equal(rx.reps, 6);
+  assert.equal(rx.rpe, 7);
+  assert.equal(rx.kg, loadFor(140, 6, 7));
+  assert.equal(rx.backoff.sets, 3);
+});
+
+const log = (o) => ({ id: Math.random().toString(36), lift: 'squat', date: '2026-11-20', weight: 110, reps: 6, rpe: 8, score: 90, issues: [], ...o });
+
+test('지난 세션이 목표보다 힘들면 강도·볼륨↓', () => {
+  const s = st({ formLogs: [log({ rpe: 9, target: { rpe: 8, reps: 6, kg: 110 } })] });
+  const rx = prescribe('squat', { state: s, settings, phase: phaseAt(2, {}), date: '2026-11-24' });
+  assert.equal(rx.rpe, 7.5);
+  assert.equal(rx.backoff.sets, 3);
+  assert.ok(rx.reasons.some((r) => r.includes('목표보다 힘들었음')));
+});
+
+test('쉬웠고 자세가 좋으면 백오프 1세트↑, 수행 기록으로 e1RM 갱신', () => {
+  const s = st({ formLogs: [log({ weight: 120, rpe: 7, target: { rpe: 8 } })] });
+  const rx = prescribe('squat', { state: s, settings, phase: phaseAt(2, {}), date: '2026-11-24' });
+  assert.equal(rx.backoff.sets, 5);
+  const e = liftE1rm('squat', s.formLogs, settings, '2026-11-24').e1rm;
+  assert.ok(e > 140, `e1rm ${e}`);
+});
+
+test('자세 결함(무릎 밸거스) → 변형 운동·보조·큐 + 자세 점수 낮으면 RPE 상한', () => {
+  const issues = [{ level: 'bad', text: '오른쪽 무릎이 안쪽으로 16° 모임: 발 삼각지지로', n: 3 }, { level: 'warn', text: '무릎이 발끝 방향보다 20° 안쪽을 향함' }];
+  const s = st({ formLogs: [log({ score: 62, issues })] });
+  const rx = prescribe('squat', { state: s, settings, phase: phaseAt(2, {}), date: '2026-11-24' });
+  assert.ok(rx.rpe <= 7.5);
+  assert.match(rx.variation.name, /템포 스쿼트/);
+  assert.ok(rx.accessories.some((a) => a.includes('힙 어브덕션')));
+  assert.ok(rx.cues.some((c) => c.includes('두 번째 발가락')));
+});
+
+test('스티킹 포인트 높이로 변형 선택 (벤치 상단 → 핀 프레스)', () => {
+  assert.equal(flagsOf(['스티킹 포인트: 상승 64% 지점(가슴에서 조금 위)에서']).sticking, 64);
+  const s = st({ formLogs: [log({ lift: 'bench', weight: 80, reps: 4, issues: [{ level: 'info', text: '스티킹 포인트: 상승 64% 지점에서 속도 0.15m/s로 급감' }] })] });
+  const rx = prescribe('bench', { state: s, settings, phase: P0, date: '2026-11-24' });
+  assert.match(rx.variation.name, /핀 프레스/);
+});
+
+test('통증 부위가 관련되면 대체 운동, 무게 20%↓', () => {
+  const ctx = { state: st(), settings, phase: P0, date: '2026-11-24', checkin: { sleep: 4, energy: 4, soreness: 2, pain: '무릎' } };
+  const rx = prescribe('squat', ctx);
+  assert.match(rx.name, /박스 스쿼트/);
+  assert.ok(rx.kg < loadFor(140, 6, 7));
+  assert.ok(rx.rpe <= 7);
+  assert.equal(prescribe('bench', ctx).name, '벤치프레스'); // 무릎 통증은 벤치와 무관
+});
+
+test('컨디션 낮으면 당일 강도·볼륨↓', () => {
+  const rx = prescribe('squat', { state: st(), settings, phase: phaseAt(1, {}), date: '2026-11-24', checkin: { sleep: 1, energy: 2, soreness: 5 } });
+  assert.equal(rx.rpe, 6.5);
+  assert.ok(rx.reasons.some((r) => r.includes('컨디션 낮음')));
+});
+
+test('피로 신호 2개 이상이면 디로드 권장', () => {
+  const s = st({ formLogs: [
+    log({ date: '2026-11-20', rpe: 9.5, target: { rpe: 8 } }),
+    log({ lift: 'bench', date: '2026-11-21', rpe: 9, target: { rpe: 8 }, pain: true }),
+  ] });
+  const f = fatigueSignals(s, '2026-11-24', 1.6);
+  assert.ok(f.deload, JSON.stringify(f));
+  assert.equal(fatigueSignals(st(), '2026-11-24').deload, false);
+});
+
+test('주간 프로그램(코칭): A일 스쿼트+OHP RPE 처방, C일 벤치 2회차, 디로드 주 러닝 감소', () => {
+  const coach = { state: st(), runAcwr: null, hardRunOn: () => false };
+  const w = buildWeek(settings, 0, null, coach);
+  const a = w.days[0];
+  assert.equal(a.rotation.key, 'A');
+  assert.ok(a.items.some((i) => i.lift === 'squat' && /RPE 7/.test(i.detail)));
+  assert.ok(a.items.some((i) => i.lift === 'ohp'));
+  const c = w.days[2];
+  assert.equal(c.rotation.key, 'C');
+  assert.ok(c.items.some((i) => i.lift === 'bench' && i.variation));
+  const dl = buildWeek(settings, 7, null, coach);
+  assert.ok(dl.weeklyKm < w.weeklyKm);
+  assert.match(dl.wave.name, /디로드/);
+});

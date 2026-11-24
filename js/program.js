@@ -1,5 +1,7 @@
 // 4일 로테이션 웨이트 + 가민 기록 기반 러닝 주간 프로그램
-// 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔) → D(휴식) 반복
+// 웨이트: A(오버헤드프레스+스쿼트) → B(벤치+데드리프트) → C(등+팔 + 벤치 2회차) → D(휴식) 반복
+// coach 컨텍스트가 있으면 코칭 엔진(coach.js)이 블록 단계·기록·자세·컨디션으로 처방을 만든다.
+import { phaseAt, prescribe, accessoryScale } from './coach.js';
 
 export const DAY_NAMES = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -17,7 +19,7 @@ export const ROTATION = [
   { key: 'A', title: '오버헤드프레스 + 스쿼트', lifts: ['squat', 'ohp'], hyp: [['레그 프레스', 3, '10-12'], ['사이드 레터럴 레이즈', 3, '15']] },
   { key: 'B', title: '벤치 + 데드리프트', lifts: ['bench', 'deadlift'], hyp: [['인클라인 덤벨 프레스', 3, '8-12'], ['트라이셉스 푸시다운', 3, '12']] },
   {
-    key: 'C', title: '등 + 팔', lifts: [], hyp: [
+    key: 'C', title: '등 + 팔', lifts: [], secondary: ['bench'], hyp: [
       ['풀업 / 랫풀다운', 4, '8-10'], ['바벨 로우', 3, '8'], ['시티드 케이블 로우', 3, '10-12'], ['페이스 풀', 3, '15'],
       ['바벨 컬', 3, '10'], ['해머 컬', 3, '12'], ['오버헤드 트라이셉스 익스텐션', 3, '12'], ['딥스 / 클로즈그립 벤치', 3, '10'],
     ],
@@ -133,13 +135,52 @@ function placeRuns(days, kinds) {
   return placed;
 }
 
+const isoOf = (d) => {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+};
+
+// 코칭 처방 → 화면 항목
+function rxItems(rx) {
+  const items = [];
+  let detail = '';
+  if (rx.single) detail += `싱글 1회 @ ${rx.single.kg}kg (RPE ${rx.single.rpe}) → `;
+  detail += `탑세트 ${rx.reps}회 @ ${rx.kg}kg (RPE ${rx.rpe})`;
+  if (rx.backoff?.sets) detail += ` → 백오프 ${rx.backoff.sets}×${rx.backoff.reps} @ ${rx.backoff.kg}kg`;
+  items.push({
+    type: 'lift', lift: rx.lift, kind: 'heavy', title: rx.name, detail,
+    kg: rx.kg, reps: rx.reps, rpe: rx.rpe, sets: 1 + (rx.backoff?.sets || 0),
+    e1rm: Math.round(rx.e1rm), note: rx.cues.join(' / '), reasons: rx.reasons,
+  });
+  if (rx.variation) {
+    const v = rx.variation;
+    items.push({
+      type: 'lift', lift: rx.lift, kind: 'variation', variation: true, title: v.name,
+      detail: `${v.sets}×${v.reps}${v.kg ? ` @ ${v.kg}kg` : ''}`, kg: v.kg, reps: v.reps, rpe: 7,
+      note: `약점 보완: ${v.why}`, reasons: [],
+    });
+  }
+  return items;
+}
+
 /**
  * @param settings 앱 설정
  * @param weekIdx 시작일 기준 주차 (0부터)
  * @param stats run-analysis.runStats() 결과 (가민 기록 기반, 없으면 설정값 사용)
+ * @param coach { state, runAcwr, hardRunOn(iso) } 코칭 엔진 컨텍스트 (없으면 고정 % 웨이브)
  */
-export function buildWeek(settings, weekIdx = 0, stats = null) {
-  const wave = WAVE[weekIdx % 4];
+export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
+  let wave = WAVE[weekIdx % 4];
+  let phase = null;
+  if (coach) {
+    phase = phaseAt(weekIdx, coach.state.coach || {});
+    const wi = Math.min(phase.wi, phase.runMul.length - 1);
+    wave = {
+      name: phase.forced ? '디로드 (피로 누적으로 자동 배치)' : `${phase.name} ${phase.wi + 1}주차`,
+      runMul: phase.runMul[wi], quality: phase.quality[Math.min(phase.wi, phase.quality.length - 1)],
+      deload: !!phase.deload, phase,
+    };
+  }
   const cycle = Math.floor(weekIdx / 4);
   const tmPct = (settings.tmPercent || 90) / 100;
   const inc = { squat: 5, bench: 2.5, deadlift: 5, ohp: 1.25 };
@@ -158,23 +199,46 @@ export function buildWeek(settings, weekIdx = 0, stats = null) {
     const name = DAY_NAMES[(date.getDay() + 6) % 7];
     const rotation = rotationOf(settings.startDate, date);
     const items = [];
-    for (const lift of rotation.lifts) {
-      const h = wave.heavy;
-      const kg = roundTo((tm[lift] * h.pct) / 100);
-      let detail = `${h.sets}세트 × ${h.reps}회 @ ${kg}kg (TM ${h.pct}%)`;
-      if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100)}kg`;
-      items.push({
-        type: 'lift', lift, kind: 'heavy',
-        title: LIFT_KO[lift], detail, kg, sets: h.sets, reps: h.reps,
-        note: wave.deload ? '디로드: 가볍게, 자세에 집중' : '탑세트 RPE 8 이하. 영상 촬영 후 자세 평가',
-      });
+    const extraAcc = [];
+    if (coach) {
+      const iso = isoOf(date);
+      const prevDay = new Date(date);
+      prevDay.setDate(date.getDate() - 1);
+      const ctx = { state: coach.state, settings, phase, date: iso, checkin: coach.state.checkins?.[iso], hardRunYesterday: coach.hardRunOn?.(isoOf(prevDay)) };
+      for (const lift of rotation.lifts) {
+        const rx = prescribe(lift, ctx);
+        items.push(...rxItems(rx));
+        extraAcc.push(...rx.accessories);
+      }
+      for (const lift of rotation.secondary || []) {
+        const rx = prescribe(lift, { ...ctx, secondary: true });
+        if (rx) {
+          items.push({ type: 'lift', lift, kind: 'variation', variation: true, title: `${rx.name} (벤치 2회차)`, detail: `${rx.sets}×${rx.reps}${rx.kg ? ` @ ${rx.kg}kg` : ''}`, kg: rx.kg, reps: rx.reps, rpe: 7, note: rx.cues.concat(rx.reasons).join(' / '), reasons: [] });
+          extraAcc.push(...rx.accessories);
+        }
+      }
+    } else {
+      for (const lift of rotation.lifts) {
+        const h = wave.heavy;
+        const kg = roundTo((tm[lift] * h.pct) / 100);
+        let detail = `${h.sets}세트 × ${h.reps}회 @ ${kg}kg (TM ${h.pct}%)`;
+        if (wave.backoff) detail += ` + 백오프 1×${wave.backoff.reps} @ ${roundTo((tm[lift] * wave.backoff.pct) / 100)}kg`;
+        items.push({
+          type: 'lift', lift, kind: 'heavy',
+          title: LIFT_KO[lift], detail, kg, sets: h.sets, reps: h.reps,
+          note: wave.deload ? '디로드: 가볍게, 자세에 집중' : '탑세트 RPE 8 이하. 영상 촬영 후 자세 평가',
+        });
+      }
     }
-    if (rotation.hyp.length) {
+    if (rotation.hyp.length || extraAcc.length) {
+      const f = coach ? accessoryScale(phase, coach.state.checkins?.[isoOf(date)], coach.runAcwr) : (wave.deload ? 0.67 : 1);
+      const list = rotation.hyp.map(([n, sets, r]) => `${n} ${Math.max(1, Math.round(sets * f))}×${r}`);
+      const uniq = [...new Set(extraAcc)];
       items.push({
         type: 'hyp',
         title: rotation.key === 'C' ? '등 + 팔 근비대' : '보조 근비대',
-        detail: rotation.hyp.map(([n, s, r]) => `${n} ${wave.deload ? Math.max(1, s - 1) : s}×${r}`).join(' · '),
-        note: '세트당 RIR 1-2',
+        detail: [...uniq.map((a) => `★${a}`), ...list].join(' · '),
+        note: `세트당 RIR 1-2${uniq.length ? ' · ★ 약점 보완 운동 우선' : ''}${f < 0.95 ? ` · 볼륨 ${Math.round(f * 100)}%` : ''}`,
       });
     }
     return { dayIdx: i, name, date, rotation, items };
@@ -201,13 +265,13 @@ export function buildWeek(settings, weekIdx = 0, stats = null) {
   placed.forEach((p) => days[p.i].items.push({ type: 'run', ...buildRun(p.kind, kmOf[p.i], wave, pc) }));
   days.forEach((d) => { d.rest = d.items.length === 0; });
 
-  return { weekIdx, wave, cycle, tm, days, weeklyKm, fiveKSec: parseTime(fiveK), stats };
+  return { weekIdx, wave, phase, cycle, tm, days, weeklyKm, fiveKSec: parseTime(fiveK), stats };
 }
 
 // 특정 날짜의 처방
-export function sessionFor(settings, date, stats = null) {
+export function sessionFor(settings, date, stats = null, coach = null) {
   const w = weekIndex(settings.startDate, date);
-  const week = buildWeek(settings, w, stats);
+  const week = buildWeek(settings, w, stats, coach);
   const i = Math.min(6, Math.max(0, daysBetween(settings.startDate, date) - w * 7));
   return week.days[i];
 }

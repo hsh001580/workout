@@ -16,7 +16,7 @@
   <nav class="tabs" role="tablist">
     <button data-tab="today" class="active">오늘</button>
     <button data-tab="program">주간 프로그램</button>
-    <button data-tab="form">자세 평가</button>
+    <button data-tab="form">세트 기록</button>
     <button data-tab="run">러닝 평가</button>
     <button data-tab="history">기록</button>
     <button data-tab="settings">설정</button>
@@ -40,8 +40,8 @@
     <!-- 자세 평가 -->
     <section id="tab-form" class="tab">
       <div class="card">
-        <h2>파워리프팅 자세 평가</h2>
-        <p class="muted">영상을 올리면 관절과 바벨을 추적해 반복마다 평가합니다. 영상은 기기 밖으로 전송되지 않습니다.</p>
+        <h2>세트 기록 · 자세 평가</h2>
+        <p class="muted">오늘 <b>탑세트</b>의 무게·반복·RPE를 기록하세요. 영상(선택)을 올리면 자세와 바벨 속도까지 평가하고, 이 기록과 느낌으로 다음 세션이 자동 설계됩니다. 영상은 기기 밖으로 전송되지 않습니다.</p>
         <div class="grid2">
           <label>종목
             <select id="formLift">
@@ -90,6 +90,7 @@
         </div>
         <div id="formProgress" class="progress hidden"><div></div><span></span></div>
 
+        <label class="inline"><input type="checkbox" id="formVariation" /> 변형 운동 세트입니다 (추정 1RM 계산에서 제외)</label>
         <h3>셀프 체크리스트</h3>
         <div id="formChecklist" class="checklist"></div>
         <label class="inline"><input type="checkbox" id="formPain" /> 통증이나 불편감이 있었다</label>
@@ -147,6 +148,11 @@
         <span id="settingsMsg" class="muted"></span>
       </div>
       <div class="card">
+        <h2>현재 추정 1RM (자동)</h2>
+        <p class="muted">탑세트 기록(무게·반복·RPE, 없으면 바벨 속도)으로 계속 갱신됩니다. 위의 1RM 입력값은 기록이 쌓이기 전 출발점입니다.</p>
+        <div id="e1rmTable" class="stats"></div>
+      </div>
+      <div class="card">
         <h2>자세 평가 기준</h2>
         <p class="muted">코칭 스타일에 따라 판정 기준이 다릅니다. 프리셋을 고르고, 필요하면 아래에서 값을 직접 바꾸세요. 바꾼 값은 프리셋보다 우선합니다.</p>
         <label>프리셋 <select id="formPreset"></select></label>
@@ -160,7 +166,19 @@
         <span id="presetMsg" class="muted"></span>
       </div>
       <div class="card">
-        <h2>가민 연동</h2>
+        <h2>가민 파일 가져오기 (설정 없이 바로)</h2>
+        <p class="muted">가민 커넥트에서 내보낸 파일을 선택하세요. 여러 개를 한 번에 선택할 수 있고, 같은 활동은 한 번만 반영됩니다.</p>
+        <ul class="muted small">
+          <li><b>여러 러닝 한 번에</b>: 가민 커넥트 웹 → 활동 → 모든 활동 → 오른쪽 위 <b>CSV 내보내기</b></li>
+          <li><b>자세한 기록 1개</b>: 활동 상세 → ⚙ → <b>원본 내보내기</b> (.zip) 또는 TCX/GPX 내보내기</li>
+        </ul>
+        <label class="file">가민 파일 (.zip .fit .tcx .gpx .csv)
+          <input type="file" id="garminFiles" accept=".zip,.fit,.tcx,.gpx,.csv" multiple />
+        </label>
+        <p id="garminImportStatus" class="muted"></p>
+      </div>
+      <div class="card">
+        <h2>가민 자동 연동 (GitHub Actions)</h2>
         <p class="muted">GitHub Actions가 3시간마다 가민 러닝 기록을 가져와 암호화해 저장합니다. 저장소 Secrets에 넣은 <b>DATA_PASSPHRASE</b>를 입력하세요. (설정 방법은 README 참고)</p>
         <div class="grid2">
           <label>복호화 비밀번호 <input type="password" id="garminPass" autocomplete="off" /></label>

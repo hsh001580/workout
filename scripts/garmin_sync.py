@@ -129,8 +129,12 @@ def main():
         return
 
     passphrase = os.environ.get("DATA_PASSPHRASE")
-    if not passphrase:
-        sys.exit("DATA_PASSPHRASE가 설정되지 않았습니다.")
+    has_login = (os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD")) or os.environ.get("GARMIN_TOKENS")
+    if not passphrase or ("--mock" not in args and not has_login):
+        # 비밀값을 아직 등록하지 않은 경우: 실패 알림이 반복되지 않도록 건너뛰고 정상 종료
+        print("가민 비밀값(GARMIN_EMAIL/GARMIN_PASSWORD, DATA_PASSPHRASE)이 없어 동기화를 건너뜁니다. "
+              "앱의 '가민 파일 가져오기'를 쓰거나 README의 설정 방법을 따라 비밀값을 등록하세요.")
+        return
 
     if "--mock" in args:
         acts = json.loads(Path(args[args.index("--mock") + 1]).read_text())

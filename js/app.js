@@ -6,6 +6,8 @@ import { getThresholds, PRESETS, THRESHOLD_META } from './thresholds.js';
 import { estimate1RM } from './bar-analysis.js';
 import { evaluateRun, runStats, RUN_TYPES } from './run-analysis.js';
 import { fetchGarmin, toRunLog } from './garmin.js';
+import { importGarminFile, isSameRun } from './garmin-import.js';
+import { liftE1rm, fatigueSignals, phaseAt, prescribe, LIFT_KO } from './coach.js';
 
 const state = load();
 const $ = (s) => document.querySelector(s);
@@ -13,6 +15,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const scoreClass = (s) => (s >= 85 ? 's-good' : s >= 65 ? 's-warn' : 's-bad');
 const persist = () => save(state);
 const stats = (date = new Date()) => runStats(state.runLogs, date, state.garmin.vo2max);
+// 코칭 엔진 컨텍스트: 기록·자세·컨디션·러닝 부하로 처방을 만든다
+const hardRunOn = (iso) => state.runLogs.some((r) => r.date === iso && ((r.result?.zone ?? 0) >= 4 || (r.result?.load ?? 0) > 150));
+const coachCtx = () => ({ state, runAcwr: stats()?.acwr ?? null, hardRunOn });
 const fmtDate = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
 
 function fbList(items) {
@@ -48,6 +53,8 @@ function itemHTML(it, idKey) {
     <div class="d">${esc(it.detail)}</div>
     ${it.pace ? `<div class="p">${esc(it.pace)}</div>` : ''}
     ${it.note ? `<div class="n">${esc(it.note)}</div>` : ''}
+    ${it.e1rm ? `<div class="n">추정 1RM ${it.e1rm}kg 기준</div>` : ''}
+    ${it.reasons?.length ? `<details class="why"><summary>왜 이렇게 처방했나요?</summary><ul>${it.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}
     ${idKey ? `<label class="inline done-toggle"><input type="checkbox" data-done="${idKey}" ${done ? 'checked' : ''}/> 완료</label>` : ''}
   </div>`;
 }
@@ -70,9 +77,12 @@ function runBasisText(w) {
 function renderWeek() {
   const weekStart = new Date(state.settings.startDate + 'T00:00:00');
   weekStart.setDate(weekStart.getDate() + viewWeek * 7);
-  const w = buildWeek(state.settings, viewWeek, stats(weekStart));
+  const w = buildWeek(state.settings, viewWeek, stats(weekStart), coachCtx());
   $('#weekTitle').textContent = `${viewWeek + 1}주차 (${fmtDate(w.days[0].date)}~${fmtDate(w.days[6].date)})`;
-  $('#weekMeta').innerHTML = `${esc(w.wave.name)} · TM 스쿼트 ${Math.round(w.tm.squat)} / 벤치 ${Math.round(w.tm.bench)} / 데드 ${Math.round(w.tm.deadlift)} / OHP ${Math.round(w.tm.ohp)}kg${w.wave.deload ? ' · <b>회복에 집중</b>' : ''}<br>${runBasisText(w)}`;
+  const e1 = (l) => Math.round(liftE1rm(l, state.formLogs, state.settings).e1rm);
+  const note = state.coach?.deloadNotes?.[viewWeek];
+  $('#weekMeta').innerHTML = `<b>${esc(w.wave.name)}</b> · 추정 1RM 스쿼트 ${e1('squat')} / 벤치 ${e1('bench')} / 데드 ${e1('deadlift')} / OHP ${e1('ohp')}kg`
+    + `${note ? `<br>⚠ 자동 디로드 이유: ${esc(note.join(', '))}` : ''}<br>${runBasisText(w)}`;
   const today = todayISO();
   $('#weekGrid').innerHTML = w.days.map((d) => {
     const iso = todayISO(d.date);
@@ -89,9 +99,9 @@ function renderWeek() {
 function renderToday() {
   const today = todayISO();
   const now = new Date();
-  const s = sessionFor(state.settings, now, stats());
+  const s = sessionFor(state.settings, now, stats(), coachCtx());
   const wIdx = weekIndex(state.settings.startDate);
-  const w = buildWeek(state.settings, wIdx, stats());
+  const w = buildWeek(state.settings, wIdx, stats(), coachCtx());
   const lifts = s.items.filter((i) => i.type === 'lift');
   const runs = s.items.filter((i) => i.type === 'run');
   const formToday = state.formLogs.filter((l) => l.date === today);
@@ -101,21 +111,39 @@ function renderToday() {
   if (lifts.length) {
     const pending = lifts.filter((l) => !formToday.some((f) => f.lift === l.lift));
     todo += pending.length
-      ? `<li class="warn">${pending.map((l) => esc(LIFT_LABEL[l.lift])).join(', ')} 자세 평가가 남았습니다. <button class="link" data-go="form" data-lift="${pending[0].lift}">평가하러 가기 →</button></li>`
-      : '<li class="good">오늘 메인 리프트 자세 평가 완료</li>';
+      ? `<li class="warn">${pending.map((l) => esc(LIFT_LABEL[l.lift])).join(', ')} 탑세트 기록·자세 평가가 남았습니다. 기록해야 다음 세션이 설계됩니다. <button class="link" data-go="form" data-lift="${pending[0].lift}">기록하러 가기 →</button></li>`
+      : '<li class="good">오늘 메인 리프트 기록 완료 → 다음 세션에 반영됩니다</li>';
   }
   if (runs.length) {
     if (runToday.length) todo += '<li class="good">오늘 러닝 평가 완료</li>';
     else if (state.garmin.passphrase) todo += '<li class="info">러닝 후 가민에 저장되면 자동으로 가져와 평가합니다 (최대 3시간 소요, 설정에서 즉시 불러오기 가능).</li>';
-    else todo += '<li class="warn">가민 연동을 설정하면 러닝이 자동 평가됩니다. <button class="link" data-go="settings">설정하기 →</button></li>';
+    else todo += '<li class="warn">러닝 후 가민 파일을 가져오면 자동 평가되고 다음 주 러닝 계획에 반영됩니다. <button class="link" data-go="settings">가져오기 →</button></li>';
   }
 
+  const ck = state.checkins?.[today];
+  const sel = (name, label, hint) => `<label>${label} <select data-ck-field="${name}">${[1, 2, 3, 4, 5].map((v) => `<option value="${v}" ${(ck?.[name] ?? 3) == v ? 'selected' : ''}>${v}</option>`).join('')}</select><span class="muted">${hint}</span></label>`;
+  const fat = fatigueSignals(state, today, stats()?.acwr);
+  const ready = ck ? ((Number(ck.sleep) + Number(ck.energy) + (6 - Number(ck.soreness))) / 3).toFixed(1) : null;
+  const checkinBody = `
+      <div class="grid2">
+        ${sel('sleep', '수면', '1 나쁨 · 5 아주 좋음')}
+        ${sel('energy', '에너지', '1 지침 · 5 넘침')}
+        ${sel('soreness', '근육통', '1 없음 · 5 심함')}
+        <label>통증 부위 <select data-ck-field="pain">${['', '허리', '무릎', '고관절', '어깨', '팔꿈치', '손목'].map((v) => `<option value="${v}" ${(ck?.pain ?? '') === v ? 'selected' : ''}>${v || '없음'}</option>`).join('')}</select></label>
+      </div>
+      <button id="saveCheckin">${ck ? '컨디션 수정' : '컨디션 기록'}</button>`;
+  const fatigueHTML = fat.score ? `<ul class="fb">${fat.signals.map((x) => `<li class="warn">피로 신호: ${esc(x)}</li>`).join('')}${fat.deload ? '<li class="bad">피로가 누적되어 디로드가 자동 배치됩니다 (주간 프로그램 확인)</li>' : ''}</ul>` : '';
+  const checkinCard = ck
+    ? `<details class="card"><summary><b>오늘 컨디션</b> 준비도 ${ready}/5 · 수면 ${ck.sleep} · 에너지 ${ck.energy} · 근육통 ${ck.soreness}${ck.pain ? ` · ${esc(ck.pain)} 통증` : ''} <span class="muted">(눌러서 수정)</span></summary>${checkinBody}</details>${fatigueHTML ? `<div class="card">${fatigueHTML}</div>` : ''}`
+    : `<div class="card"><h2>오늘 컨디션</h2><p class="muted">훈련 전에 기록하면 오늘 처방(강도·세트 수)이 자동 조정됩니다.</p>${checkinBody}${fatigueHTML}</div>`;
   $('#tab-today').innerHTML = `
+    ${ck ? '' : checkinCard}
     <div class="card">
       <h2>${esc(s.name)}요일 · ${esc(s.rotation.title)}</h2>
       <p class="muted">${today} · ${wIdx + 1}주차 · ${esc(w.wave.name)}</p>
       ${s.rest ? '<p>오늘은 완전 휴식일입니다. 수면, 단백질, 가벼운 모빌리티에 집중하세요.</p>' : s.items.map((it, i) => itemHTML(it, `${today}-${it.type}-${it.lift || it.runType || i}`)).join('')}
     </div>
+    ${ck ? checkinCard : ''}
     ${todo ? `<div class="card"><h2>오늘 할 일</h2><ul class="fb">${todo}</ul></div>` : ''}
     ${formToday.length || runToday.length ? `<div class="card"><h2>오늘의 평가</h2>
       ${formToday.map((f) => `<div>${esc(LIFT_LABEL[f.lift])} ${f.weight ? esc(f.weight) + 'kg' : ''} <span class="badge ${scoreClass(f.score)}">${f.score}</span></div>`).join('')}
@@ -123,6 +151,15 @@ function renderToday() {
     </div>` : ''}
   `;
   bindDone($('#tab-today'));
+  $('#saveCheckin').addEventListener('click', () => {
+    const c = {};
+    document.querySelectorAll('[data-ck-field]').forEach((el) => { c[el.dataset.ckField] = el.dataset.ckField === 'pain' ? el.value : Number(el.value); });
+    state.checkins = state.checkins || {};
+    state.checkins[today] = c;
+    applyAutoDeload();
+    persist();
+    renderToday();
+  });
   $('#tab-today').querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.lift) { $('#formLift').value = b.dataset.lift; prefillForm(); }
     showTab(b.dataset.go);
@@ -140,7 +177,7 @@ function renderChecklist() {
 function prefillForm() {
   renderChecklist();
   const lift = $('#formLift').value;
-  const it = sessionFor(state.settings, new Date(), stats()).items.find((i) => i.type === 'lift' && i.lift === lift);
+  const it = sessionFor(state.settings, new Date(), stats(), coachCtx()).items.find((i) => i.type === 'lift' && i.lift === lift && !i.variation);
   if (it) { $('#formReps').value = it.reps; $('#formWeight').value = it.kg; }
 }
 function updateGuide() {
@@ -277,8 +314,21 @@ $('#formAnalyze').addEventListener('click', async () => {
   }
   missed.forEach((m) => tips.push({ level: 'warn', text: `다음 세트 집중 큐: ${m}` }));
 
+  const rx = sessionFor(state.settings, new Date(), stats(), coachCtx()).items.find((i) => i.type === 'lift' && i.lift === lift && !i.variation);
+  const issueCount = {};
+  if (video?.ok) {
+    [...video.summary, ...video.reps.flatMap((r) => r.issues)].forEach((i) => {
+      if (i.level === 'good' || (i.level === 'info' && !i.text.startsWith('스티킹 포인트'))) return;
+      const k = i.text;
+      issueCount[k] = issueCount[k] || { level: i.level, text: i.text, n: 0 };
+      issueCount[k].n++;
+    });
+  }
+  const isVariation = $('#formVariation').checked;
   const log = {
-    id: uid(), date: todayISO(), lift, view,
+    id: uid(), date: todayISO(), lift, view, variation: isVariation,
+    target: rx && !isVariation ? { kg: rx.kg, reps: rx.reps, rpe: rx.rpe } : null,
+    issues: Object.values(issueCount),
     weight: $('#formWeight').value, reps: $('#formReps').value, rpe, pain,
     note: $('#formNote').value.trim(),
     score, selfScore, videoScore: video?.ok ? video.score : null,
@@ -288,7 +338,9 @@ $('#formAnalyze').addEventListener('click', async () => {
     tips,
   };
   state.formLogs.push(log);
+  applyAutoDeload();
   persist();
+  const next = isVariation ? null : nextSessionPreview(lift);
 
   const diag = video?.ok ? video.reps.flatMap((r) => r.issues.filter((i) => i.text.startsWith('스티킹 포인트')).map((i) => `${r.rep}회차 · ${i.text}`)) : [];
   $('#formResult').innerHTML = `<div class="card">
@@ -305,6 +357,7 @@ $('#formAnalyze').addEventListener('click', async () => {
         <div class="kv">${metricHTML(r.metrics)}${r.ascent != null ? `<span>상승 시간 <b>${r.ascent.toFixed(2)}초</b></span>` : ''}</div>
         ${fbList(r.issues.filter((i) => !i.text.startsWith('스티킹 포인트')))}</details>`).join('')}</div>` : ''}
     ${tips.length ? `<h3>코칭</h3>${fbList(tips)}` : ''}
+    ${next ? `<h3>다음 ${esc(LIFT_KO[lift])} 세션 설계 (${esc(next.date)})</h3>${itemHTML(next.item)}${next.variation ? itemHTML(next.variation) : ''}` : ''}
   </div>`;
   $('#formResult').scrollIntoView({ behavior: 'smooth' });
 });
@@ -320,13 +373,13 @@ function nextDay(dateStr) {
 function evaluateLog(run) {
   const date = new Date(run.date + 'T12:00:00');
   const st = stats(date);
-  const planned = sessionFor(state.settings, date, st).items.find((i) => i.type === 'run');
+  const planned = sessionFor(state.settings, date, st, coachCtx()).items.find((i) => i.type === 'run');
   const detected = run.type;
   const evalRun = { ...run, type: planned && run.source === 'garmin' ? planned.runType : run.type };
   const history = state.runLogs.filter((r) => r.date < run.date || (r.date === run.date && r.id !== run.id && r.result));
   // 가민 VO2max/최근 기록이 있으면 그 기준 페이스로 평가
   const settings = st?.fiveKSec ? { ...state.settings, fiveK: st.fiveKSec } : state.settings;
-  const result = evaluateRun(evalRun, settings, history, sessionFor(state.settings, nextDay(run.date), st));
+  const result = evaluateRun(evalRun, settings, history, sessionFor(state.settings, nextDay(run.date), st, coachCtx()));
   if (!result.ok) return result;
   if (run.source === 'garmin') {
     if (planned) {
@@ -419,7 +472,80 @@ $('#runEval').addEventListener('click', () => {
   $('#runResult').scrollIntoView({ behavior: 'smooth' });
 });
 
-// ---------- 가민 동기화 ----------
+// ---------- 가민 동기화 / 파일 가져오기 ----------
+// 새 러닝만 평가해 추가 (같은 활동이 다른 경로로 이미 있으면 건너뜀). 추가된 개수 반환
+function ingestRuns(runs) {
+  let added = 0;
+  const valid = runs.filter((r) => r.distanceKm > 0.5 && r.durationSec > 0).sort((a, b) => a.start.localeCompare(b.start));
+  for (const gr of valid) {
+    const log = toRunLog(gr, state.settings);
+    if (state.runLogs.some((r) => r.id === log.id || isSameRun(r, { ...log, durationSec: gr.durationSec, distanceKm: gr.distanceKm }) || (r.source !== 'manual' && isSameRun({ ...r, durationSec: parseTime(r.duration) }, { date: gr.date, distanceKm: gr.distanceKm, durationSec: gr.durationSec })))) continue;
+    const result = evaluateLog(log);
+    if (!result.ok) continue;
+    storeResult(log, result);
+    state.runLogs.push(log);
+    state.runLogs.sort((a, b) => a.date.localeCompare(b.date));
+    added++;
+  }
+  const observedMax = Math.max(0, ...runs.map((r) => r.maxHr || 0));
+  if (observedMax > state.settings.hrMax && observedMax < 225) state.settings.hrMax = observedMax;
+  applyAutoDeload();
+  persist();
+  return added;
+}
+
+$('#garminFiles').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  const status = $('#garminImportStatus');
+  status.textContent = '가민 파일 읽는 중…';
+  const runs = [];
+  const errors = [];
+  for (const f of files) {
+    try { runs.push(...await importGarminFile(f.name, await f.arrayBuffer())); } catch (err) { errors.push(`${f.name}: ${err.message}`); }
+  }
+  const added = ingestRuns(runs);
+  status.textContent = `러닝 ${runs.length}개 읽음 → 새로 추가 ${added}개${runs.length - added ? ` (중복 ${runs.length - added}개 제외)` : ''}${errors.length ? ` · 실패: ${errors.join(' / ')}` : ''}`;
+  e.target.value = '';
+  renderE1rmTable();
+});
+
+// ---------- 다음 세션 설계 / 자동 디로드 ----------
+function nextSessionPreview(lift) {
+  const d = new Date();
+  for (let k = 1; k <= 10; k++) {
+    d.setDate(d.getDate() + 1);
+    const s = sessionFor(state.settings, d, stats(), coachCtx());
+    const item = s.items.find((i) => i.type === 'lift' && i.lift === lift && !i.variation);
+    if (item) return { date: todayISO(d), item, variation: s.items.find((i) => i.lift === lift && i.variation) };
+  }
+  return null;
+}
+
+// 피로 신호가 쌓이면 디로드를 앞당김 (최근 3주 안에 디로드가 없을 때만)
+function applyAutoDeload() {
+  const today = todayISO();
+  const w = weekIndex(state.settings.startDate);
+  state.coach = state.coach || {};
+  state.coach.deloadWeeks = state.coach.deloadWeeks || [];
+  state.coach.deloadNotes = state.coach.deloadNotes || {};
+  const f = fatigueSignals(state, today, stats()?.acwr);
+  if (!f.deload) return;
+  const target = f.score >= 3 ? w : w + 1;
+  for (let k = target - 3; k <= target; k++) if (phaseAt(k, state.coach)?.deload) return;
+  state.coach.deloadWeeks.push(target);
+  state.coach.deloadNotes[target] = f.signals;
+}
+
+function renderE1rmTable() {
+  const el = $('#e1rmTable');
+  if (!el) return;
+  el.innerHTML = Object.keys(LIFT_KO).map((l) => {
+    const e = liftE1rm(l, state.formLogs, state.settings);
+    return `<div class="stat"><div class="l">${esc(LIFT_KO[l])}</div><div class="v">${Math.round(e.e1rm)}kg</div><div class="l">${esc(e.source)}</div></div>`;
+  }).join('');
+}
+
 async function syncGarmin(manual = false) {
   const g = state.garmin;
   const status = $('#garminStatus');
@@ -434,19 +560,9 @@ async function syncGarmin(manual = false) {
     const observedMax = Math.max(0, ...data.runs.map((r) => r.maxHr || 0));
     if (observedMax > state.settings.hrMax && observedMax < 225) state.settings.hrMax = observedMax;
 
-    const have = new Set(state.runLogs.map((r) => r.id));
-    const fresh = data.runs.filter((r) => !have.has('g' + r.id) && r.distanceKm > 0.5 && r.durationSec > 0);
-    for (const gr of fresh.sort((a, b) => a.start.localeCompare(b.start))) {
-      const log = toRunLog(gr, state.settings);
-      const result = evaluateLog(log);
-      if (!result.ok) continue;
-      storeResult(log, result);
-      state.runLogs.push(log);
-    }
-    state.runLogs.sort((a, b) => a.date.localeCompare(b.date));
-    persist();
-    status.textContent = `완료: 새 러닝 ${fresh.length}개 · 전체 ${data.runs.length}개 (가민 동기화 ${new Date(data.updated).toLocaleString('ko-KR')})`;
-    if (fresh.length || manual) rerenderActive();
+    const fresh = ingestRuns(data.runs);
+    status.textContent = `완료: 새 러닝 ${fresh} · 전체 ${data.runs.length}개 (가민 동기화 ${new Date(data.updated).toLocaleString('ko-KR')})`;
+    if (fresh || manual) rerenderActive();
   } catch (err) {
     status.textContent = `가민 불러오기 실패: ${err.message}`;
     if (manual) alert(status.textContent);
@@ -583,6 +699,7 @@ $('#savePreset').addEventListener('click', () => {
 // ---------- 설정 ----------
 function fillSettings() {
   renderPreset();
+  renderE1rmTable();
   const f = $('#settingsForm');
   for (const [k, v] of Object.entries(state.settings)) if (f.elements[k]) f.elements[k].value = v;
   $('#garminPass').value = state.garmin.passphrase;
@@ -644,6 +761,11 @@ $('#resetData').addEventListener('click', () => {
 let firstVisit = false;
 try { firstVisit = !localStorage.getItem('workout-app-v1'); } catch { /* 저장소 사용 불가 */ }
 $('#formView').value = state.settings.formView || 'side';
+{
+  // 세트 기록 탭은 오늘 처방된 첫 메인 리프트로 시작
+  const first = sessionFor(state.settings, new Date(), stats(), coachCtx()).items.find((i) => i.type === 'lift' && !i.variation);
+  if (first) $('#formLift').value = first.lift;
+}
 prefillForm();
 updateGuide();
 renderToday();

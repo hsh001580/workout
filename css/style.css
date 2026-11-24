@@ -192,3 +192,7 @@ details.card > summary::-webkit-details-marker { display: none; }
 details.rep > summary { list-style: none; cursor: pointer; }
 details.rep > summary::-webkit-details-marker { display: none; }
 details.rep:not([open]) h4 { margin: 0; }
+details.why { font-size: 0.82rem; margin-top: 4px; }
+details.why summary { cursor: pointer; color: var(--primary); }
+details.why ul { margin: 4px 0; padding-left: 18px; color: var(--muted); }
+ul.small { font-size: 0.85rem; padding-left: 18px; }
