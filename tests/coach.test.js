@@ -207,3 +207,10 @@ test('운동을 하루 쉬면(미루기) 그 세션이 다음 날로 넘어가�
   assert.ok(!w.days[1].items.some((i) => i.type === 'lift'));
   assert.ok(w.days[2].items.some((i) => i.lift === 'bench'));
 });
+
+test('웨이트를 미뤄도 러닝 날짜·종류는 그대로', () => {
+  const base = { state: st(), runAcwr: null, hardRunOn: () => false };
+  const skipped = { ...base, state: { ...st(), coach: { deloadWeeks: [], deloadNotes: {}, skips: ['2026-11-24'] } } };
+  const runs = (w) => w.days.map((d) => d.items.filter((i) => i.type === 'run').map((i) => i.title).join('+')).join('|');
+  assert.equal(runs(buildWeek(settings, 0, null, skipped)), runs(buildWeek(settings, 0, null, base)));
+});

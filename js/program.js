@@ -83,8 +83,8 @@ export function weekIndex(startDate, date = new Date()) {
   return Math.max(0, Math.floor(daysBetween(startDate, date) / 7));
 }
 
-// 운동을 못 한 날(skips)은 '미룸'으로 비우고, 그 뒤 로테이션은 하루씩 밀림 (A를 못 했으면 다음 날 A)
-export const SKIPPED = { key: 'S', title: '쉼 (세션을 다음 날로 미룸)', lifts: [], hyp: [], skipped: true };
+// 웨이트를 못 한 날(skips)은 '미룸'으로 비우고 (러닝은 그대로), 그 뒤 로테이션은 하루씩 밀림 (A를 못 했으면 다음 날 A)
+export const SKIPPED = { key: 'S', title: '웨이트 쉼 (다음 날로 미룸)', lifts: [], hyp: [], skipped: true };
 
 export function rotationOf(startDate, date, skips = []) {
   const iso = isoOf(date);
@@ -130,7 +130,7 @@ function placeRuns(days, kinds) {
     let bestScore = 0;
     days.forEach((d, i) => {
       if (used.has(i)) return;
-      let s = PREF[kind](d.rotation.key, d.date.getDay() === 0 || d.date.getDay() === 6);
+      let s = PREF[kind](d.runKey ?? d.rotation.key, d.date.getDay() === 0 || d.date.getDay() === 6);
       // 품질 런 다음 날 롱 런, 롱 런 다음 날 품질 런 피하기
       if (kind !== 'easy' && placed.some((p) => p.kind !== 'easy' && Math.abs(p.i - i) === 1)) s -= 1.5;
       if (s > bestScore) { bestScore = s; best = i; }
@@ -248,7 +248,9 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
         note: `세트당 RIR 1-2${uniq.length ? ' · ★ 약점 보완 운동 우선' : ''}${f < 0.95 ? ` · 볼륨 ${Math.round(f * 100)}%` : ''}`,
       });
     }
-    return { dayIdx: i, name, date, rotation, items };
+    // 러닝은 웨이트 미루기와 별개: 원래(달력 기준) 로테이션으로 배치해 미뤄도 러닝 날짜는 그대로
+    const runKey = rotationOf(settings.startDate, date).key;
+    return { dayIdx: i, name, date, rotation, runKey, items };
   });
 
   // 러닝 횟수: 주간 거리에 따라 3~5회

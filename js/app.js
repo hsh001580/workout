@@ -171,11 +171,11 @@ function renderToday() {
   const yMissed = ys && ys.items.some((i) => i.type === 'lift')
     && !state.formLogs.some((f) => f.date === yISO)
     && !Object.keys(state.done).some((k) => k.startsWith(yISO + '-') && k.includes('-lift-'));
-  const todayTouched = formToday.length || Object.keys(state.done).some((k) => k.startsWith(today + '-'));
+  const todayTouched = formToday.length || Object.keys(state.done).some((k) => k.startsWith(today + '-') && k.includes('-lift-'));
   const skipHTML = s.rotation.skipped
-    ? `<p class="muted">오늘 세션을 내일로 미뤘습니다. <button class="link" id="unskipToday">미루기 취소</button></p>`
-    : `${yMissed ? `<div class="notice">어제 <b>${esc(ys.rotation.title)}</b> 기록이 없습니다. 어제 쉬었다면 그 세션을 오늘 할 수 있게 미룰까요? <button class="primary" id="skipYesterday">어제 세션을 오늘로</button></div>` : ''}
-       ${lifts.length && !todayTouched ? '<p><button class="ghost" id="skipToday">오늘 못 함 → 내일로 미루기</button></p>' : ''}`;
+    ? `<p class="muted">오늘 웨이트를 내일로 미뤘습니다${runs.length ? ' (러닝은 오늘 그대로)' : ''}. <button class="link" id="unskipToday">미루기 취소</button></p>`
+    : `${yMissed ? `<div class="notice">어제 웨이트(<b>${esc(ys.rotation.title)}</b>) 기록이 없습니다. 어제 쉬었다면 그 세션을 오늘 할 수 있게 미룰까요? (러닝 일정은 그대로) <button class="primary" id="skipYesterday">어제 웨이트를 오늘로</button></div>` : ''}
+       ${lifts.length && !todayTouched ? '<p><button class="ghost" id="skipToday">오늘 웨이트 못 함 → 내일로 미루기</button></p>' : ''}`;
 
   let todo = '';
   if (lifts.length) {
@@ -231,7 +231,7 @@ function renderToday() {
     persist();
     renderToday();
   };
-  $('#skipToday')?.addEventListener('click', () => { if (confirm('오늘 세션을 내일로 미룰까요? 이후 로테이션이 하루씩 밀립니다.')) setSkip(today, true); });
+  $('#skipToday')?.addEventListener('click', () => { if (confirm('오늘 웨이트를 내일로 미룰까요? 이후 웨이트 로테이션이 하루씩 밀립니다. (러닝 일정은 그대로)')) setSkip(today, true); });
   $('#unskipToday')?.addEventListener('click', () => setSkip(today, false));
   $('#skipYesterday')?.addEventListener('click', () => setSkip(yISO, true));
   $('#saveCheckin').addEventListener('click', () => {
