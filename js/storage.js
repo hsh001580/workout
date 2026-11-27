@@ -22,6 +22,8 @@ export function defaultState() {
       deadlift1rm: 180,
       ohp1rm: 60,
       ohpMinKg: 60, // 오버헤드프레스 최소 훈련 중량 (0이면 제한 없음)
+      ohpRef6: 60, // 오버헤드프레스 기준 무게: 6회 (RPE 8) — 비우면 1RM·표준 RPE 표 사용
+      ohpRef3: 70, // 3회 (RPE 8)
       tmPercent: 90,
       minPlate: 2.5, // 가장 작은 원판 (한쪽, kg) → 무게 단위 = ×2
       weeklyKm: 20, // 가민 기록이 없을 때만 사용

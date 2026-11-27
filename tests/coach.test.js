@@ -231,3 +231,19 @@ test('오버헤드프레스 최소 훈련 중량(60kg): 탑세트·백오프·�
   const free = prescribe('ohp', { state, settings: { ...s, ohpMinKg: 0 }, phase: phaseAt(0, {}), date: '2026-12-01' });
   assert.ok(free.kg < 60);
 });
+
+test('오버헤드프레스 기준 무게(6회 60kg · 3회 70kg)를 따라 처방하고, 기록이 좋아지면 같이 오름', async () => {
+  const { prescribe, phaseAt, anchorLoad } = await import('../js/coach.js');
+  const an = { a6: 60, a3: 70 };
+  assert.equal(Math.round(anchorLoad(an, 6, 8)), 60);
+  assert.equal(Math.round(anchorLoad(an, 3, 8)), 70);
+  const s = { ...settings, ohp1rm: 60, ohpMinKg: 60, ohpRef6: 60, ohpRef3: 70, minPlate: 2.5 };
+  const rx = (logs, w) => prescribe('ohp', { state: { formLogs: logs, coach: {} }, settings: s, phase: phaseAt(w, {}), date: '2026-12-01' });
+  const int3 = rx([], 3); // 강화 1주차: 3회
+  assert.equal(int3.reps, 3);
+  assert.equal(int3.kg, 70);
+  assert.equal(rx([], 0).backoff.kg, 60); // 6회 백오프 = 60
+  // 70kg 6회를 RPE 8로 3세션 연속 → 기준보다 강해짐 → 무게 상승
+  const strong = ['2026-11-20', '2026-11-24', '2026-11-27'].map((date, i) => ({ id: 'o' + i, lift: 'ohp', date, weight: 70, reps: 6, rpe: 8, score: 90, issues: [] }));
+  assert.ok(rx(strong, 3).kg > 70, `${rx(strong, 3).kg}`);
+});

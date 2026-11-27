@@ -166,6 +166,9 @@
           </label>
           <label>오버헤드 프레스 1RM (kg) <input type="number" name="ohp1rm" step="2.5" /></label>
           <label>오버헤드프레스 최소 훈련 중량 (kg, 0 = 제한 없음) <input type="number" name="ohpMinKg" step="5" min="0" /></label>
+          <label>오버헤드프레스 기준 무게: 6회 (kg) <input type="number" name="ohpRef6" step="5" min="0" /></label>
+          <label>오버헤드프레스 기준 무게: 3회 (kg) <input type="number" name="ohpRef3" step="5" min="0" /></label>
+          <p class="muted small" style="grid-column: 1 / -1">기준 무게(RPE 8 기준)를 넣으면 1RM % 대신 이 반복-무게 관계로 처방합니다 (예: 6회 60kg · 3회 70kg → 5회 65 · 4회 65 · 2회 75). 세트 기록이 쌓여 추정 1RM이 오르면 같은 비율로 올라갑니다. 비우면 1RM 기준.</p>
           <label>주간 러닝 거리 (km, 가민 기록 없을 때) <input type="number" name="weeklyKm" min="5" max="150" /></label>
           <label>최근 5K 기록 (mm:ss, 가민 기록 없을 때) <input type="text" name="fiveK" /></label>
           <label>최대 심박 <input type="number" name="hrMax" /></label>
