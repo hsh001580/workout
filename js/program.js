@@ -83,8 +83,13 @@ export function weekIndex(startDate, date = new Date()) {
   return Math.max(0, Math.floor(daysBetween(startDate, date) / 7));
 }
 
-export function rotationOf(startDate, date) {
-  const n = daysBetween(startDate, date);
+// 운동을 못 한 날(skips)은 '미룸'으로 비우고, 그 뒤 로테이션은 하루씩 밀림 (A를 못 했으면 다음 날 A)
+export const SKIPPED = { key: 'S', title: '쉼 (세션을 다음 날로 미룸)', lifts: [], hyp: [], skipped: true };
+
+export function rotationOf(startDate, date, skips = []) {
+  const iso = isoOf(date);
+  if (skips.includes(iso)) return SKIPPED;
+  const n = daysBetween(startDate, date) - skips.filter((d) => d >= startDate && d < iso).length;
   return ROTATION[((n % 4) + 4) % 4];
 }
 
@@ -197,7 +202,7 @@ export function buildWeek(settings, weekIdx = 0, stats = null, coach = null) {
     const date = new Date(start);
     date.setDate(start.getDate() + weekIdx * 7 + i);
     const name = DAY_NAMES[(date.getDay() + 6) % 7];
-    const rotation = rotationOf(settings.startDate, date);
+    const rotation = rotationOf(settings.startDate, date, coach?.state?.coach?.skips || []);
     const items = [];
     const extraAcc = [];
     if (coach) {

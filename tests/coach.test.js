@@ -192,3 +192,18 @@ test('1.25kg 원판이 없으면 모든 바벨 무게가 5kg 단위, 백오프�
     }
   }
 });
+
+test('운동을 하루 쉬면(미루기) 그 세션이 다음 날로 넘어가고 이후 로테이션도 하루씩 밀림', async () => {
+  const { rotationOf } = await import('../js/program.js');
+  const start = '2026-11-23'; // 월 A, 화 B, 수 C, 목 D
+  const keys = (skips) => [0, 1, 2, 3, 4, 5].map((i) => rotationOf(start, new Date(2026, 10, 23 + i), skips).key).join('');
+  assert.equal(keys([]), 'ABCDAB');
+  assert.equal(keys(['2026-11-24']), 'ASBCDA'); // 화요일 B 못 함 → 수요일 B
+  assert.equal(keys(['2026-11-24', '2026-11-25']), 'ASSBCD');
+  // 주간 프로그램에도 반영
+  const coach = { state: { ...st(), coach: { deloadWeeks: [], deloadNotes: {}, skips: ['2026-11-24'] } }, runAcwr: null, hardRunOn: () => false };
+  const w = buildWeek(settings, 0, null, coach);
+  assert.equal(w.days[1].rotation.key, 'S');
+  assert.ok(!w.days[1].items.some((i) => i.type === 'lift'));
+  assert.ok(w.days[2].items.some((i) => i.lift === 'bench'));
+});

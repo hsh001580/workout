@@ -211,3 +211,6 @@ ul.small, ol.small { font-size: 0.85rem; padding-left: 18px; }
 .playback button { padding: 6px 10px; font-size: 0.85rem; }
 .playback button.on { background: var(--primary); color: var(--primary-text); border-color: transparent; }
 .playback .pb-sub { margin-top: 6px; gap: 6px; font-size: 0.85rem; }
+
+.notice { background: color-mix(in srgb, #f59e0b 14%, transparent); border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent); border-radius: 10px; padding: 10px 12px; margin: 8px 0; line-height: 1.6; }
+.notice button { margin-top: 6px; }

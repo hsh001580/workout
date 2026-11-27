@@ -163,6 +163,20 @@ function renderToday() {
   const formToday = state.formLogs.filter((l) => l.date === today);
   const runToday = state.runLogs.filter((l) => l.date === today);
 
+  // 운동 미루기: 오늘 못 하면 내일로, 어제 기록이 없으면 오늘로
+  const skips = state.coach.skips || [];
+  const yDate = new Date(now); yDate.setDate(now.getDate() - 1);
+  const yISO = todayISO(yDate);
+  const ys = yISO >= state.settings.startDate && !skips.includes(yISO) ? sessionFor(state.settings, yDate, stats(), coachCtx()) : null;
+  const yMissed = ys && ys.items.some((i) => i.type === 'lift')
+    && !state.formLogs.some((f) => f.date === yISO)
+    && !Object.keys(state.done).some((k) => k.startsWith(yISO + '-') && k.includes('-lift-'));
+  const todayTouched = formToday.length || Object.keys(state.done).some((k) => k.startsWith(today + '-'));
+  const skipHTML = s.rotation.skipped
+    ? `<p class="muted">오늘 세션을 내일로 미뤘습니다. <button class="link" id="unskipToday">미루기 취소</button></p>`
+    : `${yMissed ? `<div class="notice">어제 <b>${esc(ys.rotation.title)}</b> 기록이 없습니다. 어제 쉬었다면 그 세션을 오늘 할 수 있게 미룰까요? <button class="primary" id="skipYesterday">어제 세션을 오늘로</button></div>` : ''}
+       ${lifts.length && !todayTouched ? '<p><button class="ghost" id="skipToday">오늘 못 함 → 내일로 미루기</button></p>' : ''}`;
+
   let todo = '';
   if (lifts.length) {
     const pending = lifts.filter((l) => !formToday.some((f) => f.lift === l.lift));
@@ -199,6 +213,7 @@ function renderToday() {
     <div class="card">
       <h2>${esc(s.name)}요일 · ${esc(s.rotation.title)}</h2>
       <p class="muted">${today} · ${wIdx + 1}주차 · ${esc(w.wave.name)}</p>
+      ${skipHTML}
       ${s.rest ? '<p>오늘은 완전 휴식일입니다. 수면, 단백질, 가벼운 모빌리티에 집중하세요.</p>' : s.items.map((it, i) => itemHTML(it, `${today}-${it.type}-${it.lift || it.runType || i}`)).join('')}
     </div>
     ${ck ? checkinCard : ''}
@@ -209,6 +224,16 @@ function renderToday() {
     </div>` : ''}
   `;
   bindDone($('#tab-today'));
+  const setSkip = (iso, on) => {
+    const list = new Set(state.coach.skips || []);
+    if (on) list.add(iso); else list.delete(iso);
+    state.coach.skips = [...list].sort();
+    persist();
+    renderToday();
+  };
+  $('#skipToday')?.addEventListener('click', () => { if (confirm('오늘 세션을 내일로 미룰까요? 이후 로테이션이 하루씩 밀립니다.')) setSkip(today, true); });
+  $('#unskipToday')?.addEventListener('click', () => setSkip(today, false));
+  $('#skipYesterday')?.addEventListener('click', () => setSkip(yISO, true));
   $('#saveCheckin').addEventListener('click', () => {
     const c = {};
     document.querySelectorAll('[data-ck-field]').forEach((el) => { c[el.dataset.ckField] = el.dataset.ckField === 'pain' ? el.value : Number(el.value); });
