@@ -1031,7 +1031,7 @@ function fillSettings() {
 }
 $('#saveSettings').addEventListener('click', () => {
   const f = $('#settingsForm');
-  const numeric = ['squat1rm', 'bench1rm', 'deadlift1rm', 'ohp1rm', 'tmPercent', 'minPlate', 'weeklyKm', 'hrMax', 'hrRest'];
+  const numeric = ['squat1rm', 'bench1rm', 'deadlift1rm', 'ohp1rm', 'ohpMinKg', 'tmPercent', 'minPlate', 'weeklyKm', 'hrMax', 'hrRest'];
   for (const k of Object.keys(state.settings)) {
     if (!f.elements[k]) continue;
     const v = f.elements[k].value;

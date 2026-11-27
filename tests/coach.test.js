@@ -214,3 +214,20 @@ test('웨이트를 미뤄도 러닝 날짜·종류는 그대로', () => {
   const runs = (w) => w.days.map((d) => d.items.filter((i) => i.type === 'run').map((i) => i.title).join('+')).join('|');
   assert.equal(runs(buildWeek(settings, 0, null, skipped)), runs(buildWeek(settings, 0, null, base)));
 });
+
+test('오버헤드프레스 최소 훈련 중량(60kg): 탑세트·백오프·싱글·2회차 모두 60kg 이상, 무거워진 만큼 반복 감소', async () => {
+  const { prescribe, phaseAt } = await import('../js/coach.js');
+  const state = { formLogs: [], coach: {} };
+  const s = { ...settings, ohp1rm: 70, ohpMinKg: 60, minPlate: 2.5 };
+  for (let w = 0; w < 8; w++) {
+    const phase = phaseAt(w, {});
+    const r = prescribe('ohp', { state, settings: s, phase, date: '2026-12-01' });
+    const r2 = prescribe('ohp', { state, settings: s, phase, date: '2026-12-01', secondary: true });
+    for (const kg of [r.kg, r.backoff?.kg, r.single?.kg, r2.kg].filter((x) => x != null)) assert.ok(kg >= 60, `w${w} ${kg}`);
+  }
+  const acc = prescribe('ohp', { state, settings: s, phase: phaseAt(0, {}), date: '2026-12-01' });
+  assert.ok(acc.reps < 5 && acc.reasons.some((x) => /최소 훈련 중량 60kg/.test(x)));
+  // 0이면 제한 없음
+  const free = prescribe('ohp', { state, settings: { ...s, ohpMinKg: 0 }, phase: phaseAt(0, {}), date: '2026-12-01' });
+  assert.ok(free.kg < 60);
+});

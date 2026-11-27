@@ -370,7 +370,29 @@ export function prescribe(lift, ctx) {
   }
   if (cap) backSets = Math.min(backSets, cap.backSets);
   // 무게 단위가 크면(원판 부족) 감량분이 반올림으로 사라질 수 있어 최소 한 단위는 내림
-  const backKg = Math.min(rnd(kg * (1 - drop)), kg - step);
+  let backKg = Math.min(rnd(kg * (1 - drop)), kg - step);
+
+  // 최소 훈련 중량 (설정, 예: 오버헤드프레스 60kg): 이보다 가볍게는 처방하지 않음.
+  // 무게를 올린 만큼 반복 수를 줄여 목표 RPE를 유지
+  const minKg = Number(settings[lift + 'MinKg']) || 0;
+  const repsAt = (load, maxReps, r) => {
+    let n = maxReps;
+    while (n > 1 && e1rm * pctOf(n, r) < load * 0.985) n--;
+    return n;
+  };
+  if (minKg > 0 && !painSwap) {
+    if (kg < minKg) {
+      const before = reps;
+      kg = minKg;
+      reps = repsAt(kg, reps, rpe);
+      reasons.push(`최소 훈련 중량 ${minKg}kg 적용${reps < before ? ` → 목표 RPE 유지를 위해 ${before}회 → ${reps}회` : ''}`);
+      if (e1rm * pctOf(1, rpe) < minKg) reasons.push(`추정 1RM ${Math.round(e1rm)}kg 기준으로는 ${minKg}kg가 무거움: 실제 1RM이 더 높다면 설정 1RM을 올리거나 세트 기록에 무게·반복·RPE를 남겨 주세요`);
+    }
+    if (backKg < minKg) {
+      backKg = minKg;
+      backReps = repsAt(backKg, backReps, Math.min(10, rpe));
+    }
+  }
 
   // 7) 자세 결함·스티킹 포인트 → 변형 운동 / 큐 / 보조
   const fix = pickFix(lift, prevFlags);
@@ -391,10 +413,16 @@ export function prescribe(lift, ctx) {
     const v = variation || (base ? { name: base[0], sets: base[1], reps: base[2], kg: rnd(e1rm * base[3]), why: base[4] } : null);
     if (!v) return null;
     if (phase.deload) { v.sets = Math.max(1, v.sets - 1); if (v.kg) v.kg = rnd(v.kg * 0.88); }
+    if (minKg > 0 && v.kg != null && !variation && v.kg < minKg) {
+      const before = v.reps;
+      v.kg = minKg;
+      v.reps = repsAt(minKg, v.reps, phase.deload ? 7 : 8);
+      v.why += ` · 최소 훈련 중량 ${minKg}kg${v.reps < before ? ` (${before}회 → ${v.reps}회)` : ''}`;
+    }
     return { lift, secondary: true, name: v.name, sets: v.sets, reps: v.reps, kg: v.kg, rpe: 7, e1rm, e1Source: source, reasons: [v.why], cues, accessories };
   }
 
-  const single = phase.single && !painSwap ? { kg: loadFor(e1rm, 1, 8.5, step), rpe: 8.5 } : null;
+  const single = phase.single && !painSwap ? { kg: Math.max(minKg, loadFor(e1rm, 1, 8.5, step)), rpe: 8.5 } : null;
   return {
     lift, name, reps, rpe, kg, e1rm, e1Source: source,
     single,
