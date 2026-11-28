@@ -145,7 +145,7 @@ test('가민 피로 신호: HRV 불균형, 레디니스 저하, 안정시 심박
   assert.equal(garminFatigue({}, {}, '2026-11-24').length, 0);
 });
 
-test('데드리프트는 전용 저반복 체계: 축적기에도 세트당 5회 이하, 총 반복이 스쿼트보다 적음', async () => {
+test('데드리프트는 전용 저반복 체계: 세트당 3회 이하, 총 반복이 스쿼트보다 적음', async () => {
   const { prescribe, phaseAt } = await import('../js/coach.js');
   const state = { formLogs: [], coach: {} };
   for (let w = 0; w < 8; w++) {
@@ -153,7 +153,7 @@ test('데드리프트는 전용 저반복 체계: 축적기에도 세트당 5회
     const ctx = { state, settings, phase, date: '2026-12-01' };
     const dl = prescribe('deadlift', ctx);
     const sq = prescribe('squat', ctx);
-    assert.ok(dl.reps <= 5 && (dl.backoff?.reps ?? 0) <= 5 && (dl.backoff?.sets ?? 0) <= 3, `w${w} ${JSON.stringify([dl.reps, dl.backoff])}`);
+    assert.ok(dl.reps <= 3 && (dl.backoff?.reps ?? 0) <= 3 && (dl.backoff?.sets ?? 0) <= 4, `w${w} ${JSON.stringify([dl.reps, dl.backoff])}`);
     const tot = (r) => r.reps + (r.backoff?.sets || 0) * (r.backoff?.reps || 0);
     if (!phase.deload) assert.ok(tot(dl) < tot(sq), `w${w} dl ${tot(dl)} sq ${tot(sq)}`);
   }

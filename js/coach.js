@@ -36,12 +36,14 @@ export const BLOCK = [
 // 데드리프트 전용 반복 체계: 바닥에서 시작해 반복 사이 탄성 도움이 없고 허리·전신 피로가 커서
 // 현역 프로그램(RTS·Juggernaut 등)처럼 세트당 1~5회, 백오프도 적게. 볼륨은 변형 운동(RDL 등)으로 보충
 export const LIFT_SCHEME = {
+  // 세트당 최대 3회 (사용자 선호: 4×3 @140처럼 저반복·다세트). 볼륨은 세트 수로 확보
   deadlift: {
-    acc: { reps: [5, 5, 4], back: [2, 3, 3], backReps: [4, 4, 3] },
-    int: { reps: [3, 3, 2], back: [2, 2, 1], backReps: [3, 2, 2] },
+    acc: { reps: [3, 3, 3], back: [3, 3, 4], backReps: [3, 3, 3] },
+    int: { reps: [3, 2, 2], back: [3, 2, 2], backReps: [3, 2, 2] },
     real: { reps: [2], back: [1], backReps: [2] },
     deload: { reps: [3], back: [1], backReps: [3] },
   },
+
   // 오버헤드프레스: 작은 근육군이라 고반복·낮은 RPE로는 자극이 부족 → 탑세트를 무겁게(RPE 8~9),
   // 볼륨은 백오프와 등+팔 날의 2회차(주 2회)로 확보. 백오프 감량도 작게(5%)
   ohp: {
@@ -50,7 +52,7 @@ export const LIFT_SCHEME = {
     real: { reps: [2], rpe: [9], back: [2], backReps: [3], drop: 0.07 },
   },
 };
-const LIFT_CAP = { deadlift: { reps: 5, backReps: 5, backSets: 3 } };
+const LIFT_CAP = { deadlift: { reps: 3, backReps: 3, backSets: 4 } };
 
 const BLOCK_WEEKS = BLOCK.flatMap((b, bi) => b.reps.map((_, wi) => ({ bi, wi })));
 
